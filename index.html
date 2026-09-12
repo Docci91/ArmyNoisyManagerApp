@@ -1202,6 +1202,7 @@
 
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging-compat.js"></script>
 <script>
   // ⚠️ Remplace ces valeurs par la config de TON projet Firebase
   // (Console Firebase → ⚙️ Paramètres du projet → Tes applications → SDK setup and configuration)
@@ -1213,8 +1214,17 @@
     messagingSenderId: "95639638697",
     appId: "1:95639638697:web:17b0de353bbdac0a588fb8"
   };
+  // ⚠️ Colle ici la clé VAPID publique générée dans :
+  // Console Firebase → ⚙️ Paramètres du projet → Cloud Messaging → Configuration Web → "Générer une paire de clés"
+  const VAPID_KEY = "COLLE_TA_CLE_VAPID_ICI";
+
   firebase.initializeApp(firebaseConfig);
   const db = firebase.firestore();
+  let messaging = null;
+  try{
+    messaging = firebase.messaging();
+    messaging.onMessage(()=>{ /* foreground already covered by the live Firestore listener */ });
+  }catch(e){ console.warn('FCM non supporté sur ce navigateur', e); }
 </script>
 <script>
 (function(){
@@ -2064,6 +2074,9 @@
     }
     initCalendar();
     loadAll();
+    if('Notification' in window && Notification.permission === 'granted'){
+      setupPushToken();
+    }
   }
 
   function updateWhoami(){
@@ -2250,7 +2263,31 @@
 
   function requestNotifPermission(){
     if('Notification' in window && Notification.permission === 'default'){
-      Notification.requestPermission().then(updateNotifStatus);
+      Notification.requestPermission().then((perm)=>{
+        updateNotifStatus();
+        if(perm === 'granted') setupPushToken();
+      });
+    } else if(Notification.permission === 'granted'){
+      setupPushToken();
+    }
+  }
+
+  async function setupPushToken(){
+    if(!messaging || !currentUser) return;
+    if(!('serviceWorker' in navigator)) return;
+    if(!VAPID_KEY || VAPID_KEY === 'COLLE_TA_CLE_VAPID_ICI') return; // not configured yet
+    try{
+      const registration = await navigator.serviceWorker.register('firebase-messaging-sw.js');
+      const token = await messaging.getToken({ vapidKey: VAPID_KEY, serviceWorkerRegistration: registration });
+      if(token){
+        await db.collection('fcm_tokens').doc(token).set({
+          member: currentUser,
+          token,
+          updatedAt: new Date().toISOString()
+        });
+      }
+    }catch(e){
+      console.error('Échec de la configuration des notifications push', e);
     }
   }
 
@@ -2276,7 +2313,10 @@
   }
   document.getElementById('notif-enable-btn').addEventListener('click', ()=>{
     if('Notification' in window){
-      Notification.requestPermission().then(updateNotifStatus);
+      Notification.requestPermission().then((perm)=>{
+        updateNotifStatus();
+        if(perm === 'granted') setupPushToken();
+      });
     }
   });
   boot();
