@@ -575,6 +575,18 @@
   }
   .member-tile:hover{border-color:var(--ink);}
   .member-tile .avatar{width:32px; height:32px; font-size:13px;}
+  .new-profile-tile{
+    border-style:dashed;
+    color:var(--ink-soft);
+  }
+  .new-profile-avatar{
+    background:none !important;
+    background-image:none !important;
+    border:1.5px dashed var(--ink-soft);
+    color:var(--ink-soft);
+    font-size:16px !important;
+    font-weight:700;
+  }
   .login-back{
     font-size:12.5px;
     font-weight:600;
@@ -1602,6 +1614,42 @@
       });
       grid.appendChild(tile);
     });
+    const newTile = document.createElement('button');
+    newTile.className = 'member-tile new-profile-tile';
+    newTile.innerHTML = `<span class="avatar new-profile-avatar">+</span><span>Nouveau profil</span>`;
+    newTile.addEventListener('click', renderLoginNewProfile);
+    grid.appendChild(newTile);
+  }
+
+  function renderLoginNewProfile(){
+    const body = document.getElementById('login-body');
+    body.innerHTML = `
+      <span class="login-back" id="login-back-new">‹ Changer de personne</span>
+      <div class="login-title">Nouveau profil</div>
+      <div class="login-sub">Crée ton compte pour rejoindre l'équipe</div>
+      <div class="field" style="margin-bottom:10px;">
+        <label for="new-profile-name">Prénom</label>
+        <input type="text" id="new-profile-name" placeholder="Ton prénom">
+      </div>
+      <button class="primary" id="new-profile-next" style="width:100%;">Continuer</button>
+      <div class="login-error" id="login-error"></div>
+    `;
+    document.getElementById('login-back-new').addEventListener('click', renderLoginSelect);
+    const input = document.getElementById('new-profile-name');
+    input.focus();
+    const submit = async ()=>{
+      const name = input.value.trim();
+      const errEl = document.getElementById('login-error');
+      if(!name){ errEl.textContent = 'Entre un prénom.'; return; }
+      if(authMembers.includes(name)){ errEl.textContent = 'Ce prénom existe déjà.'; return; }
+      members = [...authMembers, name];
+      await saveMembers();
+      authMembers = members;
+      pendingMember = name;
+      renderLoginPin('create');
+    };
+    document.getElementById('new-profile-next').addEventListener('click', submit);
+    input.addEventListener('keydown', (e)=>{ if(e.key === 'Enter') submit(); });
   }
 
   function renderLoginCreateFirst(){
