@@ -1110,6 +1110,13 @@
         <span>Connecté(e) en tant que <strong id="whoami-name">—</strong></span>
         <button class="ghost" id="logout-btn">Se déconnecter</button>
       </div>
+      <div class="panel" style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+        <div>
+          <div style="font-weight:600; font-size:13.5px;">Notifications</div>
+          <div style="font-size:12px; color:var(--ink-soft);" id="notif-status">Reçois une alerte quand une tâche t'est assignée.</div>
+        </div>
+        <button class="primary" id="notif-enable-btn">Activer</button>
+      </div>
       <div class="panel">
         <div class="row">
           <div class="field">
@@ -1239,10 +1246,9 @@
   // ---------- storage helpers ----------
   async function loadAll(){
     try{
-      const [t, m, np, nb, mn] = await Promise.all([
-        safeGet('tasks'), safeGet('members'), safeGet('note-print'), safeGet('note-blank'), safeGet('member-notes')
+      const [m, np, nb, mn] = await Promise.all([
+        safeGet('members'), safeGet('note-print'), safeGet('note-blank'), safeGet('member-notes')
       ]);
-      tasks = (t ? JSON.parse(t) : []).map(normalizeTask);
       members = m ? JSON.parse(m) : [];
       memberNotes = mn ? JSON.parse(mn) : [];
       document.getElementById('note-print').value = np || '';
@@ -1251,11 +1257,54 @@
       console.error('Erreur de chargement', e);
       toast("Erreur de chargement des données");
     }
+    watchTasks();
     renderAll();
   }
+
+  // ---------- live task updates + notifications ----------
+  let knownTaskIds = new Set();
+  let firstTasksSnapshot = true;
+
+  function watchTasks(){
+    if(typeof db === 'undefined') return;
+    db.collection('app_data').doc('tasks').onSnapshot((docSnap)=>{
+      const raw = docSnap.exists ? docSnap.data().value : null;
+      const incoming = (raw ? JSON.parse(raw) : []).map(normalizeTask);
+      const isOwnWrite = docSnap.metadata.hasPendingWrites;
+
+      if(!firstTasksSnapshot && !isOwnWrite){
+        const newOnes = incoming.filter(t=>!knownTaskIds.has(t.id));
+        newOnes.forEach(t=>notifyNewTask(t));
+      }
+      firstTasksSnapshot = false;
+
+      tasks = incoming;
+      knownTaskIds = new Set(incoming.map(t=>t.id));
+      renderBoard(); renderHome(); renderMemberOptions();
+    }, (err)=>{ console.error(err); });
+  }
+
+  function notifyNewTask(task){
+    // Don't notify yourself for a task you just added.
+    if(!currentUser) return;
+    const concernsMe = task.allTeam || (task.assignees || []).includes(currentUser);
+    if(!concernsMe) return;
+
+    const who = task.allTeam ? "Toute l'équipe" : (task.assignees || []).join(', ');
+    const body = `${task.title} — assignée à ${who}`;
+
+    if('Notification' in window && Notification.permission === 'granted'){
+      try{
+        new Notification('Nouvelle tâche — ARMY NOÏSY', { body, tag: task.id });
+      }catch(e){ toast(body); }
+    } else {
+      toast(body);
+    }
+  }
+
   function renderAll(){
     renderMembers(); renderMemberOptions(); renderBoard();
-    renderHome(); renderNotesScreen(); updateWhoami();
+    renderHome(); renderNotesScreen(); updateWhoami(); updateNotifStatus();
   }
 
   async function saveMemberNotes(){
@@ -2196,8 +2245,40 @@
     localStorage.setItem('current-user', name);
     updateWhoami();
     enterApp();
+    requestNotifPermission();
   }
 
+  function requestNotifPermission(){
+    if('Notification' in window && Notification.permission === 'default'){
+      Notification.requestPermission().then(updateNotifStatus);
+    }
+  }
+
+  function updateNotifStatus(){
+    const statusEl = document.getElementById('notif-status');
+    const btn = document.getElementById('notif-enable-btn');
+    if(!statusEl || !btn) return;
+    if(!('Notification' in window)){
+      statusEl.textContent = "Non prises en charge par ce navigateur.";
+      btn.style.display = 'none';
+      return;
+    }
+    if(Notification.permission === 'granted'){
+      statusEl.textContent = 'Activées sur cet appareil.';
+      btn.style.display = 'none';
+    } else if(Notification.permission === 'denied'){
+      statusEl.textContent = "Bloquées — active-les dans les réglages du navigateur.";
+      btn.style.display = 'none';
+    } else {
+      statusEl.textContent = "Reçois une alerte quand une tâche t'est assignée.";
+      btn.style.display = '';
+    }
+  }
+  document.getElementById('notif-enable-btn').addEventListener('click', ()=>{
+    if('Notification' in window){
+      Notification.requestPermission().then(updateNotifStatus);
+    }
+  });
   boot();
 })();
 </script>
