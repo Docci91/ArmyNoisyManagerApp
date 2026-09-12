@@ -70,6 +70,7 @@
     width:auto;
     display:block;
   }
+  .sidebar-logo{ display:none; }
   header .sub{
     font-size:12.5px;
     color:rgba(255,255,255,.8);
@@ -726,12 +727,19 @@
     }
     main{
       grid-area:main;
-      max-width:860px;
+      max-width:960px;
       width:100%;
       margin:0 auto;
-      padding:32px 32px 60px 32px;
+      padding:32px 40px 60px 40px;
     }
     .back-row{ display:none; }
+
+    .sidebar-logo{
+      display:block;
+      height:36px;
+      width:auto;
+      margin:4px 0 22px 14px;
+    }
 
     nav.bottom{
       grid-area:nav;
@@ -756,11 +764,48 @@
     }
     nav.bottom .nav-icon{ width:32px; height:32px; flex-shrink:0; }
 
-    .board{ flex-direction:row; align-items:flex-start; }
-    .board .column{ flex:1; min-width:0; }
+    /* subtle lift on interactive surfaces */
+    .card, .day-panel, .note-block, .member-tile, .product-head,
+    .note-card, button.primary, .cal-day.has-tasks{
+      transition:transform .15s ease, box-shadow .15s ease;
+    }
+    .card:hover, .day-panel:hover, .note-block:hover, .note-card:hover{
+      box-shadow:0 6px 18px rgba(0,0,0,.35);
+    }
+    .member-tile:hover, .cal-day:hover{
+      transform:translateY(-2px);
+    }
+    button.primary:hover{
+      transform:translateY(-1px);
+      box-shadow:0 6px 16px rgba(255,90,54,.35);
+    }
 
-    .calendar-head{ max-width:520px; }
-    .cal-weekdays, .cal-grid{ max-width:520px; }
+    /* ---- Home: calendar + day panel side by side ---- */
+    #screen-home.active{
+      display:grid;
+      grid-template-columns:1fr 340px;
+      gap:28px;
+      align-items:start;
+    }
+    .calendar-head, .cal-weekdays, .cal-grid{ max-width:none; grid-column:1; }
+    .day-panel{ grid-column:2; grid-row:1 / span 3; position:sticky; top:24px; }
+
+    /* ---- Notes: member tabs as a left rail ---- */
+    #screen-notes.active{
+      display:grid;
+      grid-template-columns:180px 1fr;
+      gap:28px;
+      align-items:start;
+    }
+    .member-tabs{
+      flex-direction:column;
+      overflow-x:visible;
+      gap:8px;
+    }
+    .member-tab{ text-align:left; }
+
+    .board{ flex-direction:row; align-items:flex-start; gap:20px; }
+    .board .column{ flex:1; min-width:0; max-width:340px; }
   }
 </style>
 </head>
@@ -933,6 +978,7 @@
   </main>
 
   <nav class="bottom">
+    <img src="" alt="ARMY NOÏSY" class="brand-logo sidebar-logo" id="sidebar-logo">
     <button data-goto="home" class="active">
       <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg></span>
       Accueil
@@ -1611,6 +1657,7 @@
   async function boot(){
     const logoSrc = document.querySelector('header .brand-logo').getAttribute('src');
     document.getElementById('login-logo').src = logoSrc;
+    document.getElementById('sidebar-logo').src = logoSrc;
 
     const [m, pins] = await Promise.all([
       safeGet('members'), safeGet('member-pins')
