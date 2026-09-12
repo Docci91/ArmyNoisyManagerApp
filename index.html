@@ -190,6 +190,52 @@
     padding:16px;
     margin-bottom:20px;
   }
+  .upcoming-block{ margin-bottom:20px; }
+  .upcoming-empty{
+    color:var(--ink-soft);
+    font-style:italic;
+    padding:14px 0;
+  }
+  .upcoming-row{
+    display:flex;
+    align-items:flex-start;
+    gap:12px;
+    background:var(--card);
+    border:1px solid var(--line);
+    border-left:4px solid var(--line);
+    border-radius:var(--radius-sm);
+    padding:12px 14px;
+    margin-bottom:8px;
+    cursor:pointer;
+  }
+  .upcoming-row.p-high{border-left-color:var(--danger);}
+  .upcoming-row.p-med{border-left-color:#D6A017;}
+  .upcoming-row.p-low{border-left-color:var(--green);}
+  .upcoming-date{
+    flex-shrink:0;
+    width:64px;
+    font-size:12px;
+    font-weight:700;
+    color:var(--ink-soft);
+    text-transform:capitalize;
+    line-height:1.3;
+  }
+  .upcoming-date.today{ color:var(--danger); }
+  .upcoming-content{ min-width:0; flex:1; }
+  .upcoming-title{
+    font-size:14px;
+    font-weight:600;
+    margin-bottom:4px;
+    word-break:break-word;
+  }
+  .upcoming-meta{
+    display:flex;
+    align-items:center;
+    flex-wrap:wrap;
+    gap:8px;
+    font-size:12px;
+    color:var(--ink-soft);
+  }
   .day-panel-head h3{
     font-size:15px;
     font-weight:700;
@@ -896,8 +942,8 @@
       gap:28px;
       align-items:start;
     }
-    .calendar-head, .cal-weekdays, .cal-grid{ max-width:none; grid-column:1; }
-    .day-panel{ grid-column:2; grid-row:1 / span 3; position:sticky; top:24px; }
+    .calendar-head, .cal-weekdays, .cal-grid, .upcoming-block{ max-width:none; grid-column:1; }
+    .day-panel{ grid-column:2; grid-row:1 / span 4; position:sticky; top:24px; }
 
     /* ---- Notes: member tabs as a left rail ---- */
     #screen-notes.active{
@@ -956,6 +1002,11 @@
         <span>Lu</span><span>Ma</span><span>Me</span><span>Je</span><span>Ve</span><span>Sa</span><span>Di</span>
       </div>
       <div class="cal-grid" id="cal-grid"></div>
+
+      <div class="upcoming-block">
+        <div class="section-title" style="margin-bottom:10px;">Prochaines tâches</div>
+        <div id="upcoming-list"></div>
+      </div>
 
       <div class="day-panel" id="day-panel">
         <div class="day-panel-head">
@@ -1507,8 +1558,69 @@
       grid.appendChild(cell);
     }
 
+    renderUpcoming();
     renderDayPanel();
   }
+
+  function nextOccurrence(task){
+    if(!task.due) return null;
+    const todayIso = new Date().toISOString().slice(0,10);
+    if(task.due >= todayIso) return task.due;
+    if(task.repeat === 'weekly'){
+      const dueDate = new Date(task.due + 'T00:00:00');
+      const todayDate = new Date(todayIso + 'T00:00:00');
+      const diff = (dueDate.getDay() - todayDate.getDay() + 7) % 7;
+      const occDate = new Date(todayDate);
+      occDate.setDate(occDate.getDate() + diff);
+      return occDate.toISOString().slice(0,10);
+    }
+    return null;
+  }
+
+  function relativeDayLabel(iso){
+    const todayIso = new Date().toISOString().slice(0,10);
+    const tmrw = new Date(); tmrw.setDate(tmrw.getDate()+1);
+    const tmrwIso = tmrw.toISOString().slice(0,10);
+    if(iso === todayIso) return "Aujourd'hui";
+    if(iso === tmrwIso) return 'Demain';
+    const d = new Date(iso + 'T00:00:00');
+    return d.toLocaleDateString('fr-FR', {weekday:'short', day:'numeric', month:'short'});
+  }
+
+  function renderUpcoming(){
+    const wrap = document.getElementById('upcoming-list');
+    const todayIso = new Date().toISOString().slice(0,10);
+    const items = tasks
+      .filter(t=>t.status !== 'done')
+      .map(t=>({ task:t, occ: nextOccurrence(t) }))
+      .filter(x=>x.occ)
+      .sort((a,b)=> a.occ.localeCompare(b.occ) || (a.task.priority==='high'?-1:1))
+      .slice(0, 8);
+
+    if(items.length === 0){
+      wrap.innerHTML = '<div class="upcoming-empty">Aucune tâche à venir.</div>';
+      return;
+    }
+    wrap.innerHTML = '';
+    items.forEach(({task, occ})=>{
+      const row = document.createElement('div');
+      row.className = `upcoming-row p-${task.priority}`;
+      const dateEl = document.createElement('div');
+      dateEl.className = 'upcoming-date' + (occ === todayIso ? ' today' : '');
+      dateEl.textContent = relativeDayLabel(occ);
+      const content = document.createElement('div');
+      content.className = 'upcoming-content';
+      content.innerHTML = `
+        <div class="upcoming-title">${escapeHtml(task.title)}</div>
+        <div class="upcoming-meta">${assigneeMarkup(task)}${task.repeat === 'weekly' ? repeatBadge(task) : ''}</div>
+      `;
+      row.appendChild(dateEl);
+      row.appendChild(content);
+      row.addEventListener('click', ()=>openTaskModal(task));
+      wrap.appendChild(row);
+    });
+  }
+
 
   function renderDayPanel(){
     if(!selectedDate){
