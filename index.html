@@ -686,6 +686,68 @@
     background-position:center;
     color:#fff;
   }
+  /* ==================================================
+     DESKTOP LAYOUT — monitor-sized screens
+     Turns the bottom tab bar into a left sidebar, widens
+     the content area, and lays the kanban columns out
+     side by side instead of stacked.
+     ================================================== */
+  @media (min-width:900px){
+    body{ display:flex; justify-content:center; }
+    .app{
+      max-width:1180px;
+      width:100%;
+      min-height:100vh;
+      padding-bottom:0;
+      display:grid;
+      grid-template-columns:230px 1fr;
+      grid-template-rows:auto 1fr;
+      grid-template-areas:
+        "nav header"
+        "nav main";
+    }
+    header{
+      grid-area:header;
+      border-radius:0 0 0 var(--radius-lg);
+    }
+    main{
+      grid-area:main;
+      max-width:860px;
+      width:100%;
+      margin:0 auto;
+      padding:32px 32px 60px 32px;
+    }
+    .back-row{ display:none; }
+
+    nav.bottom{
+      grid-area:nav;
+      position:static;
+      transform:none;
+      max-width:none;
+      width:auto;
+      flex-direction:column;
+      align-items:stretch;
+      justify-content:flex-start;
+      gap:4px;
+      border-top:none;
+      border-right:1px solid var(--line);
+      padding:26px 14px;
+    }
+    nav.bottom button{
+      flex-direction:row;
+      justify-content:flex-start;
+      gap:12px;
+      padding:12px 14px;
+      font-size:13.5px;
+    }
+    nav.bottom .nav-icon{ width:32px; height:32px; flex-shrink:0; }
+
+    .board{ flex-direction:row; align-items:flex-start; }
+    .board .column{ flex:1; min-width:0; }
+
+    .calendar-head{ max-width:520px; }
+    .cal-weekdays, .cal-grid{ max-width:520px; }
+  }
 </style>
 </head>
 <body>
