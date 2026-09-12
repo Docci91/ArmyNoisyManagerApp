@@ -1211,6 +1211,15 @@
 </script>
 <script>
 (function(){
+  // Local (not UTC) date helpers — avoids the "today shows as yesterday/tomorrow"
+  // bug that toISOString() causes for anyone not at UTC+0.
+  function isoLocal(d){
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  }
+  function todayIsoLocal(){
+    return isoLocal(new Date());
+  }
+
   const COLUMNS = [
     {key:'todo', label:'À faire'},
     {key:'doing', label:'En cours'},
@@ -1486,7 +1495,7 @@
     const now = new Date();
     calYear = now.getFullYear();
     calMonth = now.getMonth();
-    selectedDate = now.toISOString().slice(0,10);
+    selectedDate = isoLocal(now);
     document.getElementById('cal-prev').addEventListener('click', ()=>{
       calMonth--; if(calMonth<0){calMonth=11; calYear--;}
       renderHome();
@@ -1534,7 +1543,7 @@
     let offset = firstOfMonth.getDay() - 1; // Monday = 0
     if(offset < 0) offset = 6;
     const daysInMonth = new Date(calYear, calMonth+1, 0).getDate();
-    const todayIso = new Date().toISOString().slice(0,10);
+    const todayIso = todayIsoLocal();
 
     for(let i=0; i<offset; i++){
       const empty = document.createElement('div');
@@ -1564,7 +1573,7 @@
 
   function nextOccurrence(task){
     if(!task.due) return null;
-    const todayIso = new Date().toISOString().slice(0,10);
+    const todayIso = todayIsoLocal();
     if(task.due >= todayIso) return task.due;
     if(task.repeat === 'weekly'){
       const dueDate = new Date(task.due + 'T00:00:00');
@@ -1572,15 +1581,15 @@
       const diff = (dueDate.getDay() - todayDate.getDay() + 7) % 7;
       const occDate = new Date(todayDate);
       occDate.setDate(occDate.getDate() + diff);
-      return occDate.toISOString().slice(0,10);
+      return isoLocal(occDate);
     }
     return null;
   }
 
   function relativeDayLabel(iso){
-    const todayIso = new Date().toISOString().slice(0,10);
+    const todayIso = todayIsoLocal();
     const tmrw = new Date(); tmrw.setDate(tmrw.getDate()+1);
-    const tmrwIso = tmrw.toISOString().slice(0,10);
+    const tmrwIso = isoLocal(tmrw);
     if(iso === todayIso) return "Aujourd'hui";
     if(iso === tmrwIso) return 'Demain';
     const d = new Date(iso + 'T00:00:00');
@@ -1589,7 +1598,7 @@
 
   function renderUpcoming(){
     const wrap = document.getElementById('upcoming-list');
-    const todayIso = new Date().toISOString().slice(0,10);
+    const todayIso = todayIsoLocal();
     const items = tasks
       .filter(t=>t.status !== 'done')
       .map(t=>({ task:t, occ: nextOccurrence(t) }))
@@ -1784,7 +1793,7 @@
     }
 
     document.getElementById('task-modal-priority').textContent = PRIORITY_LABELS[task.priority] || task.priority;
-    const today = new Date().toISOString().slice(0,10);
+    const today = todayIsoLocal();
     const dueEl = document.getElementById('task-modal-due');
     if(task.due){
       const overdue = task.due < today && task.status !== 'done';
@@ -1858,7 +1867,7 @@
   function renderBoard(){
     const board = document.getElementById('board');
     board.innerHTML = '';
-    const today = new Date().toISOString().slice(0,10);
+    const today = todayIsoLocal();
     const filtered = tasks.filter(t=>{
       if(!searchTerm) return true;
       return t.title.toLowerCase().includes(searchTerm) ||
