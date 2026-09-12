@@ -191,6 +191,40 @@
     margin-bottom:20px;
   }
   .upcoming-block{ margin-bottom:20px; }
+  .pinned-block{ margin-bottom:20px; }
+  .pinned-row{
+    display:flex;
+    align-items:flex-start;
+    justify-content:space-between;
+    gap:12px;
+    background:var(--card);
+    border:1px solid var(--line);
+    border-left:4px solid var(--blue);
+    border-radius:var(--radius-sm);
+    padding:12px 14px;
+    margin-bottom:8px;
+    cursor:pointer;
+  }
+  .pinned-owner{
+    flex-shrink:0;
+    font-size:11px;
+    font-weight:700;
+    color:var(--ink-soft);
+    text-transform:uppercase;
+    letter-spacing:.02em;
+  }
+  .pinned-title{
+    font-size:14px;
+    font-weight:600;
+    margin-bottom:4px;
+  }
+  .pinned-snippet{
+    font-size:12.5px;
+    color:var(--ink-soft);
+    line-height:1.4;
+  }
+  .note-pin-btn svg{ width:14px; height:14px; margin-right:2px; vertical-align:-2px; }
+  .note-pin-btn.pinned{ color:var(--danger); border-color:var(--danger); }
   .upcoming-empty{
     color:var(--ink-soft);
     font-style:italic;
@@ -942,8 +976,8 @@
       gap:28px;
       align-items:start;
     }
-    .calendar-head, .cal-weekdays, .cal-grid, .upcoming-block{ max-width:none; grid-column:1; }
-    .day-panel{ grid-column:2; grid-row:1 / span 4; position:sticky; top:24px; }
+    .calendar-head, .cal-weekdays, .cal-grid, .pinned-block, .upcoming-block{ max-width:none; grid-column:1; }
+    .day-panel{ grid-column:2; grid-row:1 / span 5; position:sticky; top:24px; }
 
     /* ---- Notes: member tabs as a left rail ---- */
     #screen-notes.active{
@@ -1002,6 +1036,11 @@
         <span>Lu</span><span>Ma</span><span>Me</span><span>Je</span><span>Ve</span><span>Sa</span><span>Di</span>
       </div>
       <div class="cal-grid" id="cal-grid"></div>
+
+      <div class="pinned-block" id="pinned-block" style="display:none;">
+        <div class="section-title" style="margin-bottom:10px;">Notes épinglées</div>
+        <div id="pinned-list"></div>
+      </div>
 
       <div class="upcoming-block">
         <div class="section-title" style="margin-bottom:10px;">Prochaines tâches</div>
@@ -1484,7 +1523,7 @@
       const snippet = (note.content || '').slice(0, 90).replace(/\n/g,' ');
       const dateLabel = note.updatedAt ? new Date(note.updatedAt).toLocaleDateString('fr-FR', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'}) : '';
       card.innerHTML = `
-        <div class="note-title">${escapeHtml(note.title || 'Sans titre')}</div>
+        <div class="note-title">${note.pinned ? '📌 ' : ''}${escapeHtml(note.title || 'Sans titre')}</div>
         <div class="note-snippet">${escapeHtml(snippet) || '<span style="font-style:italic;">Note vide</span>'}</div>
         <div class="note-date">${dateLabel}</div>
       `;
@@ -1511,6 +1550,15 @@
     back.style.margin = '0';
     back.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg> Retour`;
     back.addEventListener('click', ()=>{ notesMode = 'list'; renderNotesScreen(); });
+    const pinBtn = document.createElement('button');
+    pinBtn.className = 'ghost note-pin-btn' + (note.pinned ? ' pinned' : '');
+    pinBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="${note.pinned ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 3h6l1 6 3 3v2H5v-2l3-3z"/></svg> ${note.pinned ? 'Épinglée' : 'Épingler'}`;
+    pinBtn.addEventListener('click', async ()=>{
+      note.pinned = !note.pinned;
+      await saveMemberNotes();
+      renderHome();
+      renderNotesScreen();
+    });
     const delBtn = document.createElement('button');
     delBtn.className = 'ghost';
     delBtn.textContent = 'Supprimer';
@@ -1519,8 +1567,10 @@
       await saveMemberNotes();
       notesMode = 'list';
       renderNotesScreen();
+      renderHome();
     });
     editorHead.appendChild(back);
+    editorHead.appendChild(pinBtn);
     editorHead.appendChild(delBtn);
     wrap.appendChild(editorHead);
 
@@ -1639,6 +1689,7 @@
       grid.appendChild(cell);
     }
 
+    renderPinned();
     renderUpcoming();
     renderDayPanel();
   }
@@ -1666,6 +1717,41 @@
     if(iso === tmrwIso) return 'Demain';
     const d = new Date(iso + 'T00:00:00');
     return d.toLocaleDateString('fr-FR', {weekday:'short', day:'numeric', month:'short'});
+  }
+
+  function renderPinned(){
+    const blockEl = document.getElementById('pinned-block');
+    const wrap = document.getElementById('pinned-list');
+    const pinned = memberNotes.filter(n=>n.pinned)
+      .sort((a,b)=> (b.updatedAt||'').localeCompare(a.updatedAt||''));
+
+    if(pinned.length === 0){
+      blockEl.style.display = 'none';
+      return;
+    }
+    blockEl.style.display = '';
+    wrap.innerHTML = '';
+    pinned.forEach(note=>{
+      const row = document.createElement('div');
+      row.className = 'pinned-row';
+      const ownerLabel = note.owner === TEAM_NOTES_KEY ? "Toute l'équipe" : note.owner;
+      const snippet = (note.content || '').slice(0, 80).replace(/\n/g,' ');
+      row.innerHTML = `
+        <div style="min-width:0;">
+          <div class="pinned-title">📌 ${escapeHtml(note.title || 'Sans titre')}</div>
+          <div class="pinned-snippet">${escapeHtml(snippet) || '<span style="font-style:italic;">Note vide</span>'}</div>
+        </div>
+        <div class="pinned-owner">${escapeHtml(ownerLabel)}</div>
+      `;
+      row.addEventListener('click', ()=>{
+        selectedNotesMember = note.owner;
+        currentNoteId = note.id;
+        notesMode = 'editor';
+        goto('notes');
+        renderNotesScreen();
+      });
+      wrap.appendChild(row);
+    });
   }
 
   function renderUpcoming(){
