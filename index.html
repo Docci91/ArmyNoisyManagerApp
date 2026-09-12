@@ -1401,6 +1401,8 @@
   wireNote('note-blank', 'note-blank');
 
   // ---------- notes per member ----------
+  const TEAM_NOTES_KEY = '__team__';
+
   function renderNotesScreen(){
     const tabsWrap = document.getElementById('notes-member-tabs');
     const body = document.getElementById('notes-body');
@@ -1412,10 +1414,20 @@
       body.innerHTML = '<div class="empty">Ajoute d\'abord des membres dans l\'onglet Équipe.</div>';
       return;
     }
-    if(!selectedNotesMember || !members.includes(selectedNotesMember)){
+    if(!selectedNotesMember || (selectedNotesMember !== TEAM_NOTES_KEY && !members.includes(selectedNotesMember))){
       selectedNotesMember = members[0];
       notesMode = 'list';
     }
+
+    const teamTab = document.createElement('button');
+    teamTab.className = 'member-tab' + (selectedNotesMember === TEAM_NOTES_KEY ? ' selected' : '');
+    teamTab.textContent = "Toute l'équipe";
+    teamTab.addEventListener('click', ()=>{
+      selectedNotesMember = TEAM_NOTES_KEY;
+      notesMode = 'list';
+      renderNotesScreen();
+    });
+    tabsWrap.appendChild(teamTab);
 
     members.forEach(m=>{
       const tab = document.createElement('button');
@@ -1440,9 +1452,10 @@
     const mine = memberNotes.filter(n=>n.owner === selectedNotesMember)
       .sort((a,b)=> (b.updatedAt||'').localeCompare(a.updatedAt||''));
 
+    const titleLabel = selectedNotesMember === TEAM_NOTES_KEY ? "Notes de l'équipe" : `Notes de ${escapeHtml(selectedNotesMember)}`;
     const head = document.createElement('div');
     head.className = 'note-list-head';
-    head.innerHTML = `<div class="section-title" style="margin:0;">Notes de ${escapeHtml(selectedNotesMember)}</div>`;
+    head.innerHTML = `<div class="section-title" style="margin:0;">${titleLabel}</div>`;
     const addBtn = document.createElement('button');
     addBtn.className = 'primary';
     addBtn.textContent = '+ Nouvelle note';
