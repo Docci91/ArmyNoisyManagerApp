@@ -648,7 +648,105 @@
     font-size:13px;
   }
 
+  /* ---------- task detail modal ---------- */
+  .card{ cursor:pointer; }
+  .task-modal-overlay{
+    display:none;
+    position:fixed;
+    inset:0;
+    background:rgba(0,0,0,.6);
+    align-items:center;
+    justify-content:center;
+    z-index:100;
+    padding:20px;
+  }
+  .task-modal-overlay.show{ display:flex; }
+  .task-modal{
+    background:var(--card);
+    border:1px solid var(--line);
+    border-radius:var(--radius-lg);
+    padding:28px 24px 24px 24px;
+    width:100%;
+    max-width:420px;
+    max-height:85vh;
+    overflow-y:auto;
+    position:relative;
+  }
+  .task-modal-close{
+    position:absolute;
+    top:16px; right:16px;
+    width:32px; height:32px;
+    border-radius:50%;
+    border:none;
+    background:var(--surface-2);
+    color:var(--ink-soft);
+    display:flex; align-items:center; justify-content:center;
+    cursor:pointer;
+  }
+  .task-modal-close svg{ width:16px; height:16px; }
+  .task-modal-close:hover{ color:var(--ink); }
+  .task-modal-repeat{ margin-bottom:8px; }
+  .task-modal-title{
+    font-size:21px;
+    font-weight:700;
+    line-height:1.3;
+    margin:0 40px 22px 0;
+    word-break:break-word;
+  }
+  .task-modal-row{
+    margin-bottom:18px;
+  }
+  .task-modal-label{
+    display:block;
+    font-size:11.5px;
+    font-weight:700;
+    text-transform:uppercase;
+    letter-spacing:.04em;
+    color:var(--ink-soft);
+    margin-bottom:6px;
+  }
+  .task-modal-value{
+    font-size:15px;
+    font-weight:600;
+  }
+  .task-modal-assignees{
+    display:flex;
+    flex-wrap:wrap;
+    gap:8px;
+  }
+  .task-modal-assignees .avatar{ width:26px; height:26px; font-size:11px; }
+  .task-modal-assignee-item{
+    display:flex;
+    align-items:center;
+    gap:6px;
+    font-size:14px;
+    font-weight:600;
+    background:var(--surface-2);
+    border-radius:999px;
+    padding:5px 12px 5px 5px;
+  }
+  #task-modal-status{
+    font-family:inherit;
+    font-size:14px;
+    font-weight:600;
+    border:1px solid var(--line);
+    border-radius:var(--radius-sm);
+    padding:9px 10px;
+    background:var(--surface-2);
+    color:var(--ink);
+    width:100%;
+  }
+  .task-modal-delete{
+    width:100%;
+    justify-content:center;
+    display:flex;
+    margin-top:8px;
+    color:var(--danger);
+    border-color:var(--danger);
+  }
+
   .toast{
+
     position:fixed;
     bottom:90px; left:50%;
     transform:translateX(-50%);
@@ -992,6 +1090,35 @@
     </button>
   </nav>
 
+</div>
+
+<div class="task-modal-overlay" id="task-modal-overlay">
+  <div class="task-modal" id="task-modal">
+    <button class="task-modal-close" id="task-modal-close" aria-label="Fermer">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>
+    </button>
+    <div class="task-modal-repeat" id="task-modal-repeat"></div>
+    <div class="task-modal-title" id="task-modal-title"></div>
+
+    <div class="task-modal-row">
+      <span class="task-modal-label">Assigné à</span>
+      <div class="task-modal-assignees" id="task-modal-assignees"></div>
+    </div>
+    <div class="task-modal-row">
+      <span class="task-modal-label">Priorité</span>
+      <span class="task-modal-value" id="task-modal-priority"></span>
+    </div>
+    <div class="task-modal-row">
+      <span class="task-modal-label">Échéance</span>
+      <span class="task-modal-value" id="task-modal-due"></span>
+    </div>
+    <div class="task-modal-row">
+      <span class="task-modal-label">Statut</span>
+      <select id="task-modal-status"></select>
+    </div>
+
+    <button class="ghost task-modal-delete" id="task-modal-delete">Supprimer la tâche</button>
+  </div>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -1385,13 +1512,16 @@
       dayTasks.forEach(task=>{
         const row = document.createElement('div');
         row.className = 'day-task-row';
+        row.style.cursor = 'pointer';
         row.innerHTML = `
           <div class="who">${assigneeMarkup(task)}<span>${escapeHtml(task.title)}</span>${repeatBadge(task)}</div>
         `;
+        row.addEventListener('click', ()=>openTaskModal(task));
         const delBtn = document.createElement('button');
         delBtn.className = 'icon-btn';
         delBtn.textContent = '✕';
-        delBtn.addEventListener('click', async ()=>{
+        delBtn.addEventListener('click', async (e)=>{
+          e.stopPropagation();
           tasks = tasks.filter(t=>t.id !== task.id);
           await saveTasks();
           renderHome(); renderBoard();
@@ -1498,6 +1628,72 @@
     if(task.repeat !== 'weekly') return '';
     return `<span class="repeat-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"/><path d="M3 11V9a4 4 0 014-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>Chaque semaine</span>`;
   }
+
+  // ---------- task detail modal (readability on click) ----------
+  const PRIORITY_LABELS = {low:'Basse', med:'Moyenne', high:'Haute'};
+  let modalTaskId = null;
+
+  function openTaskModal(task){
+    modalTaskId = task.id;
+    document.getElementById('task-modal-title').textContent = task.title;
+    document.getElementById('task-modal-repeat').innerHTML = task.repeat === 'weekly' ? repeatBadge(task) : '';
+
+    const assigneesEl = document.getElementById('task-modal-assignees');
+    if(task.allTeam){
+      assigneesEl.innerHTML = '<span class="all-team-badge">Toute l\'équipe</span>';
+    } else if(!task.assignees || task.assignees.length === 0){
+      assigneesEl.innerHTML = '<span style="font-style:italic; color:var(--ink-soft);">Non assignée</span>';
+    } else {
+      assigneesEl.innerHTML = task.assignees.map(a=>
+        `<span class="task-modal-assignee-item"><span class="avatar">${initials(a)}</span>${escapeHtml(a)}</span>`
+      ).join('');
+    }
+
+    document.getElementById('task-modal-priority').textContent = PRIORITY_LABELS[task.priority] || task.priority;
+    const today = new Date().toISOString().slice(0,10);
+    const dueEl = document.getElementById('task-modal-due');
+    if(task.due){
+      const overdue = task.due < today && task.status !== 'done';
+      dueEl.textContent = formatDate(task.due) + (task.repeat === 'weekly' ? ' (chaque semaine)' : '');
+      dueEl.style.color = overdue ? 'var(--danger)' : '';
+    } else {
+      dueEl.textContent = 'Aucune';
+      dueEl.style.color = '';
+    }
+
+    const statusSel = document.getElementById('task-modal-status');
+    statusSel.innerHTML = '';
+    COLUMNS.forEach(c=>{
+      const opt = document.createElement('option');
+      opt.value = c.key; opt.textContent = c.label;
+      if(c.key === task.status) opt.selected = true;
+      statusSel.appendChild(opt);
+    });
+
+    document.getElementById('task-modal-overlay').classList.add('show');
+  }
+  function closeTaskModal(){
+    document.getElementById('task-modal-overlay').classList.remove('show');
+    modalTaskId = null;
+  }
+  document.getElementById('task-modal-close').addEventListener('click', closeTaskModal);
+  document.getElementById('task-modal-overlay').addEventListener('click', (e)=>{
+    if(e.target.id === 'task-modal-overlay') closeTaskModal();
+  });
+  document.getElementById('task-modal-status').addEventListener('change', async (e)=>{
+    const task = tasks.find(t=>t.id === modalTaskId);
+    if(!task) return;
+    task.status = e.target.value;
+    await saveTasks();
+    renderBoard(); renderHome();
+  });
+  document.getElementById('task-modal-delete').addEventListener('click', async ()=>{
+    tasks = tasks.filter(t=>t.id !== modalTaskId);
+    await saveTasks();
+    closeTaskModal();
+    renderBoard(); renderHome();
+  });
+
   function assigneeMarkup(task){
     if(task.allTeam){
       return '<span class="all-team-badge">Toute l\'équipe</span>';
@@ -1567,8 +1763,11 @@
         controls.className = 'meta';
         controls.style.marginTop = '10px';
 
+        card.addEventListener('click', ()=>openTaskModal(task));
+
         const moveSel = document.createElement('select');
         moveSel.className = 'status-move';
+        moveSel.addEventListener('click', (e)=>e.stopPropagation());
         COLUMNS.forEach(c=>{
           const opt = document.createElement('option');
           opt.value = c.key; opt.textContent = c.label;
@@ -1585,7 +1784,8 @@
         delBtn.className = 'icon-btn';
         delBtn.textContent = '✕';
         delBtn.title = 'Supprimer';
-        delBtn.addEventListener('click', async ()=>{
+        delBtn.addEventListener('click', async (e)=>{
+          e.stopPropagation();
           tasks = tasks.filter(t=>t.id !== task.id);
           await saveTasks();
           renderBoard(); renderHome();
