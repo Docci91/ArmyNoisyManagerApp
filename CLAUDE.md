@@ -7,6 +7,7 @@ Outil interne pour la marque de vêtements ARMY NOÏSY (équipe de 2 à 5 person
 - **Une seule page** : `index.html` contient tout (HTML, CSS, JS). Pas de build, pas de framework.
 - **Assets embarqués en base64** dans `index.html` : favicon, apple-touch-icon et manifest PWA (lignes 7 à 9), texture camouflage `--camo` (ligne 31), logo (ligne 1016). Ces lignes font de 10 Ko à 270 Ko : ne jamais ouvrir le fichier en entier, utiliser `grep -n` et `sed -n 'A,Bp' | cut -c1-200`.
 - **Autres fichiers à la racine** : `firebase-messaging-sw.js` (service worker FCM, doit rester à la racine) et `icon-192.png` (icône des notifications push, utilisée par le service worker).
+- **Firebase** : `functions/` (Cloud Function `notifyNewTasks`), `firebase.json`, `.firebaserc` (projet par défaut) et `firestore.rules`. Ces fichiers ne servent pas au site, seulement à `firebase deploy`.
 - **Hébergement** : GitHub Pages, branche `main`, racine. URL : https://docci91.github.io/ArmyNoisyManagerApp/
 - **Base de données** : Firebase Firestore, projet `armynoisymanagerapp` (config dans `index.html` et `firebase-messaging-sw.js`).
 - Trois blocs `<script>` en fin de page : SDK Firebase 10.12.0 (compat : app, firestore, messaging), puis la config Firebase + `VAPID_KEY` + `db`/`messaging` globaux, puis tout le code applicatif dans une IIFE (dernier bloc).
@@ -15,7 +16,7 @@ Outil interne pour la marque de vêtements ARMY NOÏSY (équipe de 2 à 5 person
 ## Données Firestore
 
 Collection `app_data`, un document par clé, avec le champ `value` (chaîne JSON) et `updatedAt` :
-- `tasks` : liste de tâches `{id, title, assignees[], allTeam, priority, due, status, repeat}`. `priority` vaut `low`, `med` ou `high` ; `due` est une date `AAAA-MM-JJ` (ou vide) ; `repeat` vaut `'weekly'` ou `null` ; `status` vaut `todo`, `doing` ou `done`. `normalizeTask()` convertit les anciennes tâches (champ `assignee` unique).
+- `tasks` : liste de tâches `{id, title, assignees[], allTeam, priority, due, status, repeat, createdBy}`. `priority` vaut `low`, `med` ou `high` ; `due` est une date `AAAA-MM-JJ` (ou vide) ; `repeat` vaut `'weekly'` ou `null` ; `status` vaut `todo`, `doing` ou `done`. `createdBy` est le prénom de l'auteur (absent sur les anciennes tâches). `normalizeTask()` convertit les anciennes tâches (champ `assignee` unique).
 - `members` : liste de prénoms.
 - `member-pins` : `{prénom: hash SHA-256 du code à 4 chiffres}` (sans sel).
 - `member-notes` : notes `{id, owner, title, content, updatedAt, pinned}`. `owner` vaut un prénom ou `__team__` (notes de toute l'équipe).
@@ -45,13 +46,14 @@ Thème sombre façon app fitness : fond `#101114`, cartes `#1B1D22`, accent oran
 
 ## État actuel et reste à faire
 
-Le code client des notifications push est en ligne, avec la clé VAPID : chaque appareil enregistre son jeton dans `fcm_tokens`. Mais **rien n'envoie encore de push** : sans Cloud Function, seules les notifications navigateur de `watchTasks` marchent, et seulement quand l'app est ouverte.
+Le code client des notifications push est en ligne, avec la clé VAPID : chaque appareil enregistre son jeton dans `fcm_tokens`. La Cloud Function `notifyNewTasks` (`functions/index.js`) est écrite mais **pas encore déployée** : tant qu'elle ne l'est pas, seules les notifications navigateur de `watchTasks` marchent, et seulement quand l'app est ouverte.
 
-**Le dossier `functions/` n'est pas dans le dépôt** (il n'y a jamais été, ni `firebase.json`, ni `firestore.rules`) : il n'existe que sur l'ordinateur de Dorian, s'il existe encore. Reste à faire (demande le compte de Dorian) :
+Fonctionnement : à chaque écriture de `app_data/tasks`, elle compare avant/après, et pour chaque nouvelle tâche envoie un message FCM « data » (`title`, `body`, `tag`) aux jetons des assignés (tous les `members` si `allTeam`), sauf à `createdBy`. Le service worker affiche la notification ; ne pas passer à un message avec champ `notification`, sinon elle s'affiche en double. Les jetons invalides sont supprimés de `fcm_tokens`.
+
+Reste à faire, depuis l'ordinateur de Dorian (Node 20 et `npm install -g firebase-tools`, puis `firebase login`) :
 1. Passer le projet au plan Blaze (gratuit à ce volume, carte requise).
-2. Récupérer ou réécrire la Cloud Function `notifyNewTasks` (déclenchée à l'écriture de `app_data/tasks`, envoie un push aux jetons `fcm_tokens` des membres concernés par les nouvelles tâches) et la committer dans `functions/` avec `firebase.json`.
-3. La déployer : `npm install` dans `functions/`, puis `firebase deploy --only functions`. Dorian a eu l'erreur « functions predeploy error: Command terminated with non-zero exit code 1 » : lire le message d'erreur affiché juste avant.
-4. Publier les règles Firestore couvrant `app_data` et `fcm_tokens` (lecture/écriture ouvertes).
+2. À la racine du dépôt : `cd functions && npm install && cd ..`, puis `firebase deploy --only functions,firestore:rules`.
+3. Si le déploiement échoue, lire le message d'erreur affiché avant la dernière ligne. `firebase.json` n'a volontairement pas d'étape `predeploy` (c'est elle qui causait l'erreur « functions predeploy error » chez Dorian).
 
 ## Pièges connus
 

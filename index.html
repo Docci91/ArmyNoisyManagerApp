@@ -1647,7 +1647,8 @@
       priority: 'med',
       due: selectedDate,
       status: 'todo',
-      repeat: repeatChk.checked ? 'weekly' : null
+      repeat: repeatChk.checked ? 'weekly' : null,
+      createdBy: currentUser
     });
     input.value = '';
     resetAssigneeChips('day-task-assignee-chips');
@@ -2116,7 +2117,8 @@
       priority: document.getElementById('task-priority').value,
       due: dueVal,
       status: 'todo',
-      repeat: repeatChk.checked ? 'weekly' : null
+      repeat: repeatChk.checked ? 'weekly' : null,
+      createdBy: currentUser
     };
     tasks.push(task);
     document.getElementById('task-title').value = '';
