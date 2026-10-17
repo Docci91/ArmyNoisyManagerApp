@@ -862,6 +862,61 @@
   }
   .toast.show{opacity:1;}
 
+  /* ---------- orders (Shopify) ---------- */
+  .orders-head{
+    display:flex; align-items:center; justify-content:space-between; gap:12px;
+    margin-bottom:14px;
+  }
+  .orders-head .section-title{ margin:0; }
+  .orders-sync{ font-size:12px; color:var(--ink-soft); margin-top:4px; }
+  .orders-sync.error{ color:var(--danger); }
+  .orders-stats{ display:flex; gap:10px; margin-bottom:18px; }
+  .orders-stat{
+    flex:1;
+    background:var(--card);
+    border:1px solid var(--line);
+    border-radius:var(--radius-md);
+    padding:12px 14px;
+  }
+  .orders-stat-value{ font-size:22px; font-weight:700; }
+  .orders-stat-label{ font-size:12px; color:var(--ink-soft); }
+  .orders-table-wrap{
+    background:var(--card);
+    border:1px solid var(--line);
+    border-radius:var(--radius-md);
+    overflow-x:auto;
+    margin-bottom:22px;
+  }
+  table.orders-table{ width:100%; border-collapse:collapse; font-size:13.5px; }
+  .orders-table th{
+    text-align:left;
+    font-size:11.5px;
+    font-weight:600;
+    color:var(--ink-soft);
+    text-transform:uppercase;
+    letter-spacing:.04em;
+    padding:12px 14px;
+    border-bottom:1px solid var(--line);
+    white-space:nowrap;
+  }
+  .orders-table td{ padding:11px 14px; border-bottom:1px solid var(--line); vertical-align:top; }
+  .orders-table tr:last-child td{ border-bottom:none; }
+  .orders-table .num{ text-align:right; white-space:nowrap; }
+  .orders-table .qty{ font-weight:700; color:var(--blue); }
+  .orders-table .sku{ display:block; font-size:11.5px; color:var(--ink-soft); }
+  .order-card{
+    background:var(--card);
+    border:1px solid var(--line);
+    border-radius:var(--radius-sm);
+    padding:12px 14px;
+    margin-bottom:10px;
+  }
+  .order-card-head{ display:flex; justify-content:space-between; gap:10px; margin-bottom:6px; }
+  .order-card-head a{ color:var(--ink); font-weight:700; text-decoration:none; }
+  .order-card-date{ font-size:12px; color:var(--ink-soft); }
+  .order-card-item{ font-size:13px; color:var(--ink-soft); padding:2px 0; }
+  .order-card-item strong{ color:var(--ink); }
+
   /* ---------- bottom nav ---------- */
   nav.bottom{
     position:fixed;
@@ -886,9 +941,11 @@
     gap:4px;
     cursor:pointer;
     color:var(--ink-soft);
-    font-size:11px;
+    font-size:10.5px;
     font-family:inherit;
     font-weight:600;
+    min-width:0;
+    padding:0 1px;
   }
   nav.bottom .nav-icon{
     width:34px; height:34px;
@@ -912,7 +969,7 @@
   @media (min-width:900px){
     .app{
       max-width:none;
-      width:100%;
+      width:calc(100% - 230px);
       min-height:100vh;
       padding-bottom:0;
       margin-left:230px;
@@ -945,6 +1002,7 @@
       z-index:30;
     }
     nav.bottom button{
+      flex:0 0 auto;
       flex-direction:row;
       justify-content:flex-start;
       gap:12px;
@@ -1181,6 +1239,22 @@
       <div id="notes-body"></div>
     </section>
 
+    <!-- ===================== ORDERS (Shopify) ===================== -->
+    <section id="screen-orders" class="screen">
+      <div class="back-row" data-goto="home">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        Accueil
+      </div>
+      <div class="orders-head">
+        <div>
+          <div class="section-title">Commandes à faire</div>
+          <div class="orders-sync" id="orders-sync">—</div>
+        </div>
+        <button class="ghost" id="orders-refresh-btn">Actualiser</button>
+      </div>
+      <div id="orders-body"><div class="empty">Chargement des commandes…</div></div>
+    </section>
+
   </main>
 
   <nav class="bottom">
@@ -1191,6 +1265,10 @@
     <button data-goto="tasks">
       <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg></span>
       Tâches
+    </button>
+    <button data-goto="orders">
+      <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 01-8 0"/></svg></span>
+      Commandes
     </button>
     <button data-goto="stock">
       <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8l-9-5-9 5v8l9 5 9-5V8z"/><path d="M3 8l9 5 9-5"/></svg></span>
@@ -1307,8 +1385,100 @@
       toast("Erreur de chargement des données");
     }
     watchTasks();
+    watchShopifyOrders();
     renderAll();
   }
+
+  // ---------- Shopify : commandes à envoyer ----------
+  // Les commandes sont écrites dans app_data/shopify-orders par la Cloud Function
+  // (synchro toutes les 15 min, ou à la demande via app_data/shopify-sync-request).
+  let shopifyOrders = null; // {syncedAt, orders:[{id,name,createdAt,url,items:[{title,variant,sku,qty}]}], error?}
+  let shopifyWatching = false;
+
+  function watchShopifyOrders(){
+    if(typeof db === 'undefined' || shopifyWatching) return;
+    shopifyWatching = true;
+    db.collection('app_data').doc('shopify-orders').onSnapshot((docSnap)=>{
+      const raw = docSnap.exists ? docSnap.data().value : null;
+      try{ shopifyOrders = raw ? JSON.parse(raw) : null; }catch(e){ shopifyOrders = null; }
+      renderOrders();
+    }, (err)=>{ console.error(err); });
+  }
+
+  function renderOrders(){
+    const syncEl = document.getElementById('orders-sync');
+    const body = document.getElementById('orders-body');
+    if(!shopifyOrders){
+      syncEl.textContent = 'Pas encore synchronisé avec Shopify';
+      syncEl.classList.remove('error');
+      body.innerHTML = '<div class="empty">Aucune donnée Shopify pour l\'instant. Les commandes apparaîtront ici une fois la synchronisation en place.</div>';
+      return;
+    }
+    const fmt = iso => new Date(iso).toLocaleString('fr-FR', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
+    if(shopifyOrders.error){
+      syncEl.textContent = `Échec de la synchro (${fmt(shopifyOrders.errorAt)}) : ${shopifyOrders.error}`;
+      syncEl.classList.add('error');
+    } else {
+      syncEl.textContent = `Mis à jour le ${fmt(shopifyOrders.syncedAt)}`;
+      syncEl.classList.remove('error');
+    }
+
+    const orders = shopifyOrders.orders || [];
+    if(orders.length === 0){
+      body.innerHTML = '<div class="empty">Aucune commande à envoyer 🎉</div>';
+      return;
+    }
+
+    // Regroupe par produit + variante (taille, couleur…).
+    const byProduct = new Map();
+    orders.forEach(o=>o.items.forEach(it=>{
+      const key = it.title + '||' + it.variant;
+      const row = byProduct.get(key) || {title: it.title, variant: it.variant, sku: it.sku, qty: 0, orders: new Set()};
+      row.qty += it.qty;
+      row.orders.add(o.name);
+      byProduct.set(key, row);
+    }));
+    const rows = [...byProduct.values()].sort((a,b)=> b.qty - a.qty || a.title.localeCompare(b.title, 'fr'));
+    const totalItems = rows.reduce((n,r)=>n + r.qty, 0);
+
+    body.innerHTML = `
+      <div class="orders-stats">
+        <div class="orders-stat"><div class="orders-stat-value">${orders.length}</div><div class="orders-stat-label">commande${orders.length>1?'s':''} à envoyer</div></div>
+        <div class="orders-stat"><div class="orders-stat-value">${totalItems}</div><div class="orders-stat-label">article${totalItems>1?'s':''} à préparer</div></div>
+      </div>
+      <div class="orders-table-wrap">
+        <table class="orders-table">
+          <thead><tr><th>Produit</th><th>Variante</th><th class="num">Qté</th><th class="num">Commandes</th></tr></thead>
+          <tbody>
+            ${rows.map(r=>`<tr>
+              <td>${escapeHtml(r.title)}${r.sku ? `<span class="sku">${escapeHtml(r.sku)}</span>` : ''}</td>
+              <td>${escapeHtml(r.variant || '—')}</td>
+              <td class="num qty">${r.qty}</td>
+              <td class="num">${r.orders.size}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div class="section-title" style="margin-bottom:10px;">Détail par commande</div>
+      ${orders.slice().sort((a,b)=> a.createdAt.localeCompare(b.createdAt)).map(o=>`
+        <div class="order-card">
+          <div class="order-card-head">
+            <a href="${escapeHtml(o.url)}" target="_blank" rel="noopener">${escapeHtml(o.name)}</a>
+            <span class="order-card-date">${fmt(o.createdAt)}</span>
+          </div>
+          ${o.items.map(it=>`<div class="order-card-item"><strong>${it.qty} ×</strong> ${escapeHtml(it.title)}${it.variant ? ' — ' + escapeHtml(it.variant) : ''}</div>`).join('')}
+        </div>`).join('')}
+    `;
+  }
+
+  document.getElementById('orders-refresh-btn').addEventListener('click', async ()=>{
+    const btn = document.getElementById('orders-refresh-btn');
+    btn.disabled = true;
+    btn.textContent = 'Actualisation…';
+    const ok = await dbSet('shopify-sync-request', new Date().toISOString());
+    if(!ok) toast("Échec de la demande d'actualisation");
+    setTimeout(()=>{ btn.disabled = false; btn.textContent = 'Actualiser'; }, 4000);
+  });
 
   // ---------- live task updates + notifications ----------
   let knownTaskIds = new Set();
