@@ -70,16 +70,19 @@ exports.notifyNewTasks = functions.firestore
     await Promise.all([...invalidTokens].map(t=>db.collection('fcm_tokens').doc(t).delete()));
   });
 
-// ---------- Shopify : commandes à envoyer ----------
-// Récupère les commandes ouvertes non (ou partiellement) expédiées et les écrit
-// dans app_data/shopify-orders, que la page « Commandes » écoute en temps réel.
-// Seuls le numéro, la date et les articles sont copiés : aucune donnée client,
-// car les règles Firestore sont ouvertes.
+// ---------- Shopify : commandes à envoyer + produits actifs ----------
+// Copie depuis Shopify, dans Firestore :
+//  - app_data/shopify-orders   : commandes ouvertes non (ou partiellement) expédiées
+//                                (numéro, date, articles ; aucune donnée client,
+//                                car les règles Firestore sont ouvertes) ;
+//  - app_data/shopify-products : produits actifs et leurs variantes, pour l'écran Stock.
+// Les quantités de stock, elles, sont saisies à la main dans la collection stock_items.
 //
 // Secrets à définir une fois (firebase functions:secrets:set NOM) :
 //   SHOPIFY_STORE          ex. army-noisy.myshopify.com
 //   SHOPIFY_CLIENT_ID      identifiant client de l'app (Dev Dashboard Shopify)
 //   SHOPIFY_CLIENT_SECRET  secret client de l'app
+// Scopes de l'app : read_orders, read_products.
 
 const SHOPIFY_SECRETS = ['SHOPIFY_STORE', 'SHOPIFY_CLIENT_ID', 'SHOPIFY_CLIENT_SECRET'];
 const SHOPIFY_API_VERSION = '2026-07';
@@ -100,6 +103,24 @@ const ORDERS_QUERY = `
     }
   }`;
 
+const PRODUCTS_QUERY = `
+  query($cursor: String) {
+    products(first: 50, after: $cursor, sortKey: TITLE, query: "status:active") {
+      nodes {
+        legacyResourceId
+        title
+        variants(first: 100) {
+          nodes { legacyResourceId title sku }
+        }
+      }
+      pageInfo { hasNextPage endCursor }
+    }
+  }`;
+
+function shopifyStore(){
+  return (process.env.SHOPIFY_STORE || '').trim().replace(/^https?:\/\//, '').replace(/\/$/, '');
+}
+
 async function shopifyToken(store){
   // Jeton valable 24 h, obtenu à chaque synchro (client credentials grant).
   const res = await fetch(`https://${store}/admin/oauth/access_token`, {
@@ -115,63 +136,91 @@ async function shopifyToken(store){
   return (await res.json()).access_token;
 }
 
-async function fetchOpenOrders(){
-  const store = (process.env.SHOPIFY_STORE || '').trim().replace(/^https?:\/\//, '').replace(/\/$/, '');
-  const token = await shopifyToken(store);
-  const orders = [];
+// Parcourt toutes les pages d'une requête GraphQL dont la racine est `field`.
+async function shopifyQueryAll(store, token, query, field){
+  const nodes = [];
   let cursor = null;
   for(let page = 0; page < 20; page++){
     const res = await fetch(`https://${store}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
-      body: JSON.stringify({ query: ORDERS_QUERY, variables: { cursor } })
+      body: JSON.stringify({ query, variables: { cursor } })
     });
     const body = await res.json();
     if(!res.ok || body.errors) throw new Error(`Erreur Shopify : ${JSON.stringify(body.errors || res.status)}`);
-    const conn = body.data.orders;
-    conn.nodes.forEach(o=>{
-      const items = o.lineItems.nodes
-        .filter(li=>li.unfulfilledQuantity > 0)
-        .map(li=>({ title: li.title, variant: li.variantTitle || '', sku: li.sku || '', qty: li.unfulfilledQuantity }));
-      if(items.length) orders.push({
-        id: o.legacyResourceId,
-        name: o.name,
-        createdAt: o.createdAt,
-        url: `https://${store}/admin/orders/${o.legacyResourceId}`,
-        items
-      });
-    });
+    const conn = body.data[field];
+    nodes.push(...conn.nodes);
     if(!conn.pageInfo.hasNextPage) break;
     cursor = conn.pageInfo.endCursor;
   }
+  return nodes;
+}
+
+async function fetchOpenOrders(store, token){
+  const nodes = await shopifyQueryAll(store, token, ORDERS_QUERY, 'orders');
+  const orders = [];
+  nodes.forEach(o=>{
+    const items = o.lineItems.nodes
+      .filter(li=>li.unfulfilledQuantity > 0)
+      .map(li=>({ title: li.title, variant: li.variantTitle || '', sku: li.sku || '', qty: li.unfulfilledQuantity }));
+    if(items.length) orders.push({
+      id: o.legacyResourceId,
+      name: o.name,
+      createdAt: o.createdAt,
+      url: `https://${store}/admin/orders/${o.legacyResourceId}`,
+      items
+    });
+  });
   return orders;
 }
 
-async function syncShopifyOrders(){
+async function fetchActiveProducts(store, token){
+  const nodes = await shopifyQueryAll(store, token, PRODUCTS_QUERY, 'products');
+  return nodes.map(p=>({
+    id: p.legacyResourceId,
+    title: p.title,
+    variants: p.variants.nodes.map(v=>({
+      id: v.legacyResourceId,
+      // Shopify nomme « Default Title » la variante unique d'un produit sans options.
+      title: v.title === 'Default Title' ? '' : v.title,
+      sku: v.sku || ''
+    }))
+  }));
+}
+
+// Écrit `build()` dans app_data/<key> ; en cas d'erreur, garde les dernières
+// données connues et ajoute le message d'erreur.
+async function writeSynced(key, build){
   let payload;
   try{
-    payload = { syncedAt: new Date().toISOString(), orders: await fetchOpenOrders() };
+    payload = { syncedAt: new Date().toISOString(), ...(await build()) };
   }catch(e){
-    console.error(e);
-    // On garde les dernières commandes connues et on signale l'erreur.
-    const prev = await db.collection('app_data').doc('shopify-orders').get();
+    console.error(key, e);
+    const prev = await db.collection('app_data').doc(key).get();
     const old = prev.exists ? JSON.parse(prev.data().value || '{}') : {};
     payload = { ...old, error: e.message, errorAt: new Date().toISOString() };
   }
-  await db.collection('app_data').doc('shopify-orders').set({
+  await db.collection('app_data').doc(key).set({
     value: JSON.stringify(payload),
     updatedAt: new Date().toISOString()
   });
 }
 
+async function syncShopify(){
+  const store = shopifyStore();
+  const tokenPromise = shopifyToken(store);
+  await writeSynced('shopify-orders', async ()=>({ orders: await fetchOpenOrders(store, await tokenPromise) }));
+  await writeSynced('shopify-products', async ()=>({ products: await fetchActiveProducts(store, await tokenPromise) }));
+}
+
 // Toutes les 15 minutes.
-exports.syncShopifyOrdersScheduled = functions
+exports.syncShopifyScheduled = functions
   .runWith({ secrets: SHOPIFY_SECRETS })
   .pubsub.schedule('every 15 minutes')
-  .onRun(()=>syncShopifyOrders());
+  .onRun(()=>syncShopify());
 
-// Bouton « Actualiser » de la page : l'app écrit app_data/shopify-sync-request.
-exports.syncShopifyOrdersOnRequest = functions
+// Boutons « Actualiser » des écrans Commandes et Stock : l'app écrit app_data/shopify-sync-request.
+exports.syncShopifyOnRequest = functions
   .runWith({ secrets: SHOPIFY_SECRETS })
   .firestore.document('app_data/shopify-sync-request')
-  .onWrite(()=>syncShopifyOrders());
+  .onWrite(()=>syncShopify());
