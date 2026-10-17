@@ -1,13 +1,13 @@
 # ARMY NOÏSY — app de gestion d'équipe
 
-Outil interne pour la marque de vêtements ARMY NOÏSY (équipe de 2 à 5 personnes) : calendrier, tâches, notes, stock (notes Print/Blank), équipe. L'utilisateur s'appelle Dorian et parle français : l'interface et les échanges sont en français.
+Outil interne pour la marque de vêtements ARMY NOÏSY (équipe de 2 à 5 personnes) : calendrier, tâches, commandes Shopify à envoyer, stock, notes, équipe. L'utilisateur s'appelle Dorian et parle français : l'interface et les échanges sont en français.
 
 ## Architecture
 
 - **Une seule page** : `index.html` contient tout (HTML, CSS, JS). Pas de build, pas de framework.
 - **Assets embarqués en base64** dans `index.html` : favicon, apple-touch-icon et manifest PWA (lignes 7 à 9), texture camouflage `--camo` (ligne 31), logo (ligne 1016). Ces lignes font de 10 Ko à 270 Ko : ne jamais ouvrir le fichier en entier, utiliser `grep -n` et `sed -n 'A,Bp' | cut -c1-200`.
 - **Autres fichiers à la racine** : `firebase-messaging-sw.js` (service worker FCM, doit rester à la racine) et `icon-192.png` (icône des notifications push, utilisée par le service worker).
-- **Firebase** : `functions/` (Cloud Functions `notifyNewTasks`, `syncShopifyOrdersScheduled`, `syncShopifyOrdersOnRequest`), `firebase.json`, `.firebaserc` (projet par défaut) et `firestore.rules`. Ces fichiers ne servent pas au site, seulement à `firebase deploy`.
+- **Firebase** : `functions/` (Cloud Functions `notifyNewTasks`, `syncShopifyScheduled`, `syncShopifyOnRequest`), `firebase.json`, `.firebaserc` (projet par défaut) et `firestore.rules`. Ces fichiers ne servent pas au site, seulement à `firebase deploy`.
 - **Hébergement** : GitHub Pages, branche `main`, racine. URL : https://docci91.github.io/ArmyNoisyManagerApp/
 - **Base de données** : Firebase Firestore, projet `armynoisymanagerapp` (config dans `index.html` et `firebase-messaging-sw.js`).
 - Trois blocs `<script>` en fin de page : SDK Firebase 10.12.0 (compat : app, firestore, messaging), puis la config Firebase + `VAPID_KEY` + `db`/`messaging` globaux, puis tout le code applicatif dans une IIFE (dernier bloc).
@@ -20,15 +20,18 @@ Collection `app_data`, un document par clé, avec le champ `value` (chaîne JSON
 - `members` : liste de prénoms.
 - `member-pins` : `{prénom: hash SHA-256 du code à 4 chiffres}` (sans sel).
 - `member-notes` : notes `{id, owner, title, content, updatedAt, pinned}`. `owner` vaut un prénom ou `__team__` (notes de toute l'équipe).
-- `note-print`, `note-blank` : texte brut des deux notes de stock.
+- `note-print`, `note-blank` : anciennes notes de stock Print/Blank, **plus utilisées** depuis le nouveau stock (données laissées en place).
 - `shopify-orders` : écrit uniquement par la Cloud Function, `{syncedAt, orders:[{id, name, createdAt, url, items:[{title, variant, sku, qty}]}], error?, errorAt?}`. `qty` = quantité restant à expédier. Volontairement **aucune donnée client** (règles ouvertes).
-- `shopify-sync-request` : horodatage écrit par le bouton « Actualiser », déclenche une synchro.
+- `shopify-products` : écrit uniquement par la Cloud Function, produits **actifs** de Shopify `{syncedAt, products:[{id, title, variants:[{id, title, sku}]}], error?, errorAt?}`. `title` de variante vide = produit sans options (« Default Title » chez Shopify).
+- `shopify-sync-request` : horodatage écrit par les boutons « Actualiser » (Commandes et Stock), déclenche une synchro.
+
+Collection `stock_items` : quantités de stock **saisies à la main**, un document par variante (id = id de variante Shopify) `{qty, productId, productTitle, variantTitle, sku, updatedAt, updatedBy}`. Les noms sont recopiés pour pouvoir afficher une variante qui n'est plus active sur Shopify. Les boutons +/− utilisent `FieldValue.increment` pour ne pas s'écraser entre deux personnes.
 
 Collection `fcm_tokens` : un document par appareil, d'identifiant le jeton lui-même, `{member, token, updatedAt}`.
 
 La session (qui est connecté) est dans `localStorage` (`current-user`), propre à chaque appareil.
 
-Seules `tasks` et `shopify-orders` sont écoutées en temps réel ; les autres clés sont lues une fois au chargement (`loadAll()`), il faut recharger la page pour voir les modifs des autres.
+Sont écoutés en temps réel : `tasks`, `shopify-orders`, `shopify-products` et la collection `stock_items` ; les autres clés sont lues une fois au chargement (`loadAll()`), il faut recharger la page pour voir les modifs des autres.
 
 ## Fonctionnalités
 
@@ -37,7 +40,7 @@ Seules `tasks` et `shopify-orders` sont écoutées en temps réel ; les autres c
 - Accueil : calendrier mensuel, notes épinglées, prochaines tâches chronologiques, panneau du jour (ajout de tâche au clic sur un jour).
 - Tâches : kanban 3 colonnes, assignation multiple ou « Toute l'équipe », répétition hebdomadaire, fenêtre de détail au clic.
 - Commandes (`#screen-orders`) : commandes Shopify ouvertes non expédiées, tableau regroupé par produit + variante (quantité à envoyer, nombre de commandes), puis détail par commande avec lien vers l'admin Shopify. Bouton « Actualiser ».
-- Stock : deux zones de texte libre (Print, Blank), sauvegarde automatique 700 ms après la frappe.
+- Stock (`#screen-stock`) : liste des produits actifs Shopify et de leurs variantes, quantité gérée à la main (+/− ou saisie). Une variante qui n'est plus active sur Shopify mais avec du stock > 0 reste affichée avec le badge « Plus en vente » ; à 0, elle disparaît. Recherche par produit, taille ou SKU. Avant la première synchro Shopify, la liste est vide.
 - Équipe : qui est connecté, déconnexion, activation des notifications, ajout et suppression de membres.
 - Notes : un onglet par membre plus un onglet « Toute l'équipe », plusieurs notes par onglet, épinglage vers l'accueil.
 - Notifications : écoute temps réel de `tasks` (`watchTasks`) + notifications navigateur ; push FCM même app fermée via `firebase-messaging-sw.js` et la Cloud Function.
@@ -58,12 +61,12 @@ Fonctionnement : à chaque écriture de `app_data/tasks`, elle compare avant/apr
 2. À la racine du dépôt : `cd functions && npm install && cd ..`, puis `firebase deploy --only functions,firestore:rules`.
 3. Si le déploiement échoue, lire le message d'erreur affiché avant la dernière ligne. `firebase.json` n'a volontairement pas d'étape `predeploy` (c'est elle qui causait l'erreur « functions predeploy error » chez Dorian).
 
-### Shopify (commandes à faire)
+### Shopify (commandes à faire et liste du stock)
 
-`syncShopifyOrders` (dans `functions/index.js`) tourne toutes les 15 min et à chaque écriture de `app_data/shopify-sync-request`. Elle obtient un jeton (valable 24 h) par *client credentials grant* puis lit l'API Admin GraphQL (`SHOPIFY_API_VERSION`, à remonter quand Shopify retire la version). Le jeton Shopify ne doit **jamais** être dans `index.html` (site public) : tout passe par la fonction.
+`syncShopify` (dans `functions/index.js`, commandes + produits actifs) tourne toutes les 15 min et à chaque écriture de `app_data/shopify-sync-request`. Elle obtient un jeton (valable 24 h) par *client credentials grant* puis lit l'API Admin GraphQL (`SHOPIFY_API_VERSION`, à remonter quand Shopify retire la version). Le jeton Shopify ne doit **jamais** être dans `index.html` (site public) : tout passe par la fonction.
 
 Mise en place, à faire par Dorian avant le `firebase deploy` (sinon le déploiement échoue faute de secrets) :
-1. Sur https://dev.shopify.com (Dev Dashboard, même organisation que la boutique) : créer une app, lui donner le scope `read_orders`, publier une version et l'installer sur la boutique. Récupérer l'identifiant client et le secret client dans les paramètres de l'app.
+1. Sur https://dev.shopify.com (Dev Dashboard, même organisation que la boutique) : créer une app, lui donner les scopes `read_orders` et `read_products`, publier une version et l'installer sur la boutique. Récupérer l'identifiant client et le secret client dans les paramètres de l'app.
 2. `firebase functions:secrets:set SHOPIFY_STORE` (ex. `army-noisy.myshopify.com`), puis `SHOPIFY_CLIENT_ID`, puis `SHOPIFY_CLIENT_SECRET`.
 3. Déployer (étape 2 ci-dessus). Pour ne déployer que les notifications sans Shopify : `firebase deploy --only functions:notifyNewTasks,firestore:rules`.
 

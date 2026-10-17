@@ -1,9 +1,12 @@
 rules_version = '2';
 // Règles ouvertes : outil interne, pas de Firebase Authentication.
-// Tout le monde qui connaît l'URL peut lire et écrire ces deux collections.
+// Tout le monde qui connaît l'URL peut lire et écrire ces collections.
 service cloud.firestore {
   match /databases/{database}/documents {
     match /app_data/{key} {
+      allow read, write: if true;
+    }
+    match /stock_items/{variantId} {
       allow read, write: if true;
     }
     match /fcm_tokens/{token} {

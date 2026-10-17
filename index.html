@@ -323,7 +323,7 @@
     margin-bottom:4px;
     font-weight:600;
   }
-  input[type=text], input[type=date], input[type=number], select{
+  input[type=text], input[type=search], input[type=date], input[type=number], select{
     font-family:inherit;
     font-size:14px;
     border:1px solid var(--line);
@@ -518,45 +518,67 @@
   }
   .member-chip .avatar{width:18px;height:18px;font-size:9px;}
 
-  /* ---------- stock notes ---------- */
-  .note-block{
-    border:1px solid var(--line);
-    background:var(--card);
-    border-radius:var(--radius-md);
-    overflow:hidden;
-    margin-bottom:16px;
-  }
-  .note-head{
-    display:flex;
-    align-items:center;
-    justify-content:space-between;
-    padding:12px 14px;
-    border-bottom:1px solid var(--line);
-  }
-  .note-head h3{
-    margin:0;
-    font-size:14px;
-    font-weight:700;
-    text-transform:uppercase;
-    letter-spacing:.03em;
-  }
   .note-status{
     font-size:11px;
     color:var(--ink-soft);
   }
-  .note-block textarea{
-    display:block;
-    width:100%;
-    min-height:180px;
-    border:none;
-    resize:vertical;
-    padding:14px;
-    font-family:inherit;
-    font-size:14px;
-    color:var(--ink);
-    background:transparent;
+
+  /* ---------- stock (Shopify products, manual quantities) ---------- */
+  .stock-search{ margin-bottom:16px; }
+  .stock-product{
+    background:var(--card);
+    border:1px solid var(--line);
+    border-radius:var(--radius-md);
+    margin-bottom:14px;
+    overflow:hidden;
   }
-  .note-block textarea:focus{outline:none;}
+  .stock-product.retired{ border-style:dashed; }
+  .stock-product-head{
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding:12px 14px;
+    border-bottom:1px solid var(--line);
+  }
+  .stock-product-title{ font-weight:700; font-size:14.5px; }
+  .stock-product-total{ font-size:12px; color:var(--ink-soft); white-space:nowrap; }
+  .stock-badge{
+    display:inline-block;
+    margin-left:8px;
+    padding:2px 8px;
+    border-radius:999px;
+    font-size:10.5px;
+    font-weight:700;
+    letter-spacing:.02em;
+    color:var(--blue);
+    border:1px solid var(--blue);
+    vertical-align:middle;
+    white-space:nowrap;
+  }
+  .stock-variant{
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding:9px 14px;
+    border-bottom:1px solid var(--line);
+  }
+  .stock-variant:last-child{ border-bottom:none; }
+  .stock-variant-name{ font-size:13.5px; min-width:0; }
+  .stock-variant-sku{ display:block; font-size:11.5px; color:var(--ink-soft); }
+  .stock-qty{ display:flex; align-items:center; gap:6px; flex-shrink:0; }
+  .stock-qty button{
+    width:32px; height:32px;
+    border-radius:50%;
+    border:1px solid var(--line);
+    background:var(--surface-2);
+    color:var(--ink);
+    font-size:17px;
+    line-height:1;
+    cursor:pointer;
+  }
+  .stock-qty input{
+    width:56px;
+    text-align:center;
+    padding:6px 4px;
+    font-weight:700;
+  }
+  .stock-qty input.zero{ color:var(--ink-soft); font-weight:500; }
 
   /* ---------- notes ---------- */
   .member-tabs{
@@ -1012,11 +1034,11 @@
     nav.bottom .nav-icon{ width:32px; height:32px; flex-shrink:0; }
 
     /* subtle lift on interactive surfaces */
-    .card, .day-panel, .note-block, .member-tile, .product-head,
+    .card, .day-panel, .member-tile, .product-head,
     .note-card, button.primary, .cal-day.has-tasks{
       transition:transform .15s ease, box-shadow .15s ease;
     }
-    .card:hover, .day-panel:hover, .note-block:hover, .note-card:hover{
+    .card:hover, .day-panel:hover, .note-card:hover{
       box-shadow:0 6px 18px rgba(0,0,0,.35);
     }
     .member-tile:hover, .cal-day:hover{
@@ -1176,24 +1198,17 @@
         Accueil
       </div>
 
-      <div class="note-block">
-        <div class="note-head">
-          <h3>Print</h3>
-          <span class="note-status" id="status-print"></span>
+      <div class="orders-head">
+        <div>
+          <div class="section-title">Stock</div>
+          <div class="orders-sync" id="stock-sync">—</div>
         </div>
-        <textarea id="note-print" placeholder="Écrivez ici tout ce qui concerne le stock print (quantités, réassorts, à faire...)"></textarea>
+        <button class="ghost" id="stock-refresh-btn">Actualiser</button>
       </div>
-
-      <div class="note-block">
-        <div class="note-head">
-          <h3>Blank</h3>
-          <span class="note-status" id="status-blank"></span>
-        </div>
-        <textarea id="note-blank" placeholder="Écrivez ici tout ce qui concerne le stock blank (quantités, réassorts, à faire...)"></textarea>
-      </div>
-
+      <input type="search" class="stock-search" id="stock-search" placeholder="Rechercher un produit, une taille, un SKU…">
+      <div id="stock-body"><div class="empty">Chargement des produits…</div></div>
       <p style="color:var(--ink-soft); font-size:12px; margin-top:4px;">
-        Ces notes sont partagées et sauvegardées automatiquement : tout le monde peut écrire dedans.
+        La liste des produits vient de Shopify (produits actifs). Les quantités sont saisies à la main et partagées avec toute l'équipe.
       </p>
     </section>
 
@@ -1364,7 +1379,6 @@
   let members = [];
   let memberNotes = [];
   let searchTerm = '';
-  let saveNoteTimer = null;
   let selectedNotesMember = null;
   let notesMode = 'list'; // 'list' | 'editor'
   let currentNoteId = null;
@@ -1373,19 +1387,18 @@
   // ---------- storage helpers ----------
   async function loadAll(){
     try{
-      const [m, np, nb, mn] = await Promise.all([
-        safeGet('members'), safeGet('note-print'), safeGet('note-blank'), safeGet('member-notes')
+      const [m, mn] = await Promise.all([
+        safeGet('members'), safeGet('member-notes')
       ]);
       members = m ? JSON.parse(m) : [];
       memberNotes = mn ? JSON.parse(mn) : [];
-      document.getElementById('note-print').value = np || '';
-      document.getElementById('note-blank').value = nb || '';
     }catch(e){
       console.error('Erreur de chargement', e);
       toast("Erreur de chargement des données");
     }
     watchTasks();
     watchShopifyOrders();
+    watchStock();
     renderAll();
   }
 
@@ -1471,14 +1484,177 @@
     `;
   }
 
-  document.getElementById('orders-refresh-btn').addEventListener('click', async ()=>{
-    const btn = document.getElementById('orders-refresh-btn');
+  async function requestShopifySync(btn){
     btn.disabled = true;
     btn.textContent = 'Actualisation…';
     const ok = await dbSet('shopify-sync-request', new Date().toISOString());
     if(!ok) toast("Échec de la demande d'actualisation");
     setTimeout(()=>{ btn.disabled = false; btn.textContent = 'Actualiser'; }, 4000);
+  }
+  ['orders-refresh-btn', 'stock-refresh-btn'].forEach(id=>{
+    const btn = document.getElementById(id);
+    btn.addEventListener('click', ()=>requestShopifySync(btn));
   });
+
+  function formatSyncLine(el, data, emptyLabel){
+    const fmt = iso => new Date(iso).toLocaleString('fr-FR', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
+    el.classList.toggle('error', !!(data && data.error));
+    if(!data) el.textContent = emptyLabel;
+    else if(data.error) el.textContent = `Échec de la synchro (${fmt(data.errorAt)}) : ${data.error}`;
+    else el.textContent = `Liste Shopify mise à jour le ${fmt(data.syncedAt)}`;
+  }
+
+  // ---------- stock ----------
+  // Liste des produits : produits actifs de Shopify (app_data/shopify-products,
+  // écrit par la Cloud Function). Quantités : saisies à la main, un document par
+  // variante dans la collection stock_items (id = id de variante Shopify), avec
+  // les noms recopiés pour pouvoir afficher un produit retiré de Shopify tant
+  // qu'il en reste en stock (badge « Plus en vente »).
+  let shopifyProducts = null; // {syncedAt, products:[{id,title,variants:[{id,title,sku}]}], error?}
+  let stockItems = {};        // variantId -> {qty, productId, productTitle, variantTitle, sku}
+  let stockWatching = false;
+  let stockRenderPending = false;
+
+  function watchStock(){
+    if(typeof db === 'undefined' || stockWatching) return;
+    stockWatching = true;
+    db.collection('app_data').doc('shopify-products').onSnapshot((docSnap)=>{
+      const raw = docSnap.exists ? docSnap.data().value : null;
+      try{ shopifyProducts = raw ? JSON.parse(raw) : null; }catch(e){ shopifyProducts = null; }
+      renderStock();
+    }, (err)=>{ console.error(err); });
+    db.collection('stock_items').onSnapshot((snap)=>{
+      const next = {};
+      snap.forEach(d=>{ next[d.id] = d.data(); });
+      stockItems = next;
+      renderStock();
+    }, (err)=>{ console.error(err); });
+  }
+
+  function stockQty(variantId){
+    const item = stockItems[variantId];
+    return item ? Math.max(0, item.qty || 0) : 0;
+  }
+
+  // Produits à afficher : actifs Shopify + variantes en stock qui n'y sont plus.
+  function buildStockList(){
+    const list = [];
+    const byProduct = new Map();
+    const activeVariantIds = new Set();
+    ((shopifyProducts && shopifyProducts.products) || []).forEach(p=>{
+      const entry = {id: p.id, title: p.title, retired: false,
+        variants: p.variants.map(v=>({id: v.id, title: v.title, sku: v.sku, retired: false}))};
+      p.variants.forEach(v=>activeVariantIds.add(v.id));
+      byProduct.set(p.id, entry);
+      list.push(entry);
+    });
+    if(shopifyProducts){
+      Object.entries(stockItems).forEach(([variantId, item])=>{
+        if(activeVariantIds.has(variantId) || stockQty(variantId) <= 0) return;
+        let entry = byProduct.get(item.productId);
+        if(!entry){
+          entry = {id: item.productId, title: item.productTitle || 'Produit inconnu', retired: true, variants: []};
+          byProduct.set(item.productId, entry);
+          list.push(entry);
+        }
+        entry.variants.push({id: variantId, title: item.variantTitle || '', sku: item.sku || '', retired: true});
+      });
+    }
+    return list.sort((a,b)=> (a.retired - b.retired) || a.title.localeCompare(b.title, 'fr'));
+  }
+
+  function renderStock(){
+    const body = document.getElementById('stock-body');
+    // Ne pas écraser une saisie en cours : on redessine à la sortie du champ.
+    if(body.contains(document.activeElement) && document.activeElement.tagName === 'INPUT'){
+      stockRenderPending = true;
+      return;
+    }
+    stockRenderPending = false;
+    formatSyncLine(document.getElementById('stock-sync'), shopifyProducts, 'Pas encore synchronisé avec Shopify');
+    if(!shopifyProducts){
+      body.innerHTML = '<div class="empty">La liste des produits apparaîtra ici une fois la synchronisation Shopify en place.</div>';
+      return;
+    }
+    const term = document.getElementById('stock-search').value.trim().toLowerCase();
+    const list = buildStockList().map(p=>{
+      if(!term || p.title.toLowerCase().includes(term)) return p;
+      const variants = p.variants.filter(v=>(v.title + ' ' + v.sku).toLowerCase().includes(term));
+      return variants.length ? {...p, variants} : null;
+    }).filter(Boolean);
+    if(list.length === 0){
+      body.innerHTML = `<div class="empty">${term ? 'Aucun produit ne correspond à la recherche.' : 'Aucun produit actif sur Shopify.'}</div>`;
+      return;
+    }
+    const retiredBadge = '<span class="stock-badge">Plus en vente</span>';
+    body.innerHTML = list.map(p=>{
+      const total = p.variants.reduce((n,v)=>n + stockQty(v.id), 0);
+      return `<div class="stock-product${p.retired ? ' retired' : ''}">
+        <div class="stock-product-head">
+          <div class="stock-product-title">${escapeHtml(p.title)}${p.retired ? retiredBadge : ''}</div>
+          <div class="stock-product-total">${total} en stock</div>
+        </div>
+        ${p.variants.map(v=>{
+          const qty = stockQty(v.id);
+          return `<div class="stock-variant">
+            <div class="stock-variant-name">${escapeHtml(v.title || 'Taille unique')}${v.retired && !p.retired ? retiredBadge : ''}${v.sku ? `<span class="stock-variant-sku">${escapeHtml(v.sku)}</span>` : ''}</div>
+            <div class="stock-qty" data-variant="${escapeHtml(v.id)}" data-product="${escapeHtml(p.id)}">
+              <button type="button" data-delta="-1" aria-label="Retirer 1">−</button>
+              <input type="number" inputmode="numeric" min="0" value="${qty}" class="${qty === 0 ? 'zero' : ''}" aria-label="Quantité">
+              <button type="button" data-delta="1" aria-label="Ajouter 1">+</button>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>`;
+    }).join('');
+  }
+
+  // Infos recopiées dans stock_items pour retrouver le produit s'il quitte Shopify.
+  function stockMeta(productId, variantId){
+    const p = buildStockList().find(x=>x.id === productId);
+    const v = p && p.variants.find(x=>x.id === variantId);
+    return {
+      productId,
+      productTitle: p ? p.title : '',
+      variantTitle: v ? v.title : '',
+      sku: v ? v.sku : '',
+      updatedAt: new Date().toISOString(),
+      updatedBy: currentUser || ''
+    };
+  }
+
+  async function writeStock(productId, variantId, qtyValue){
+    try{
+      await db.collection('stock_items').doc(variantId).set({...stockMeta(productId, variantId), qty: qtyValue}, {merge: true});
+    }catch(e){
+      console.error(e);
+      toast("Échec de la sauvegarde du stock");
+    }
+  }
+
+  const stockBody = document.getElementById('stock-body');
+  stockBody.addEventListener('click', (e)=>{
+    const btn = e.target.closest('button[data-delta]');
+    if(!btn) return;
+    const wrap = btn.closest('.stock-qty');
+    const delta = Number(btn.dataset.delta);
+    if(delta < 0 && stockQty(wrap.dataset.variant) <= 0) return;
+    // increment() : deux personnes qui cliquent en même temps ne s'écrasent pas.
+    writeStock(wrap.dataset.product, wrap.dataset.variant, firebase.firestore.FieldValue.increment(delta));
+  });
+  stockBody.addEventListener('change', (e)=>{
+    if(!e.target.matches('.stock-qty input')) return;
+    const wrap = e.target.closest('.stock-qty');
+    const qty = Math.max(0, parseInt(e.target.value, 10) || 0);
+    writeStock(wrap.dataset.product, wrap.dataset.variant, qty);
+  });
+  stockBody.addEventListener('focusout', ()=>{
+    setTimeout(()=>{ if(stockRenderPending) renderStock(); }, 0);
+  });
+  stockBody.addEventListener('keydown', (e)=>{
+    if(e.key === 'Enter' && e.target.matches('.stock-qty input')) e.target.blur();
+  });
+  document.getElementById('stock-search').addEventListener('input', renderStock);
 
   // ---------- live task updates + notifications ----------
   let knownTaskIds = new Set();
@@ -1554,15 +1730,6 @@
     const ok = await dbSet('members', JSON.stringify(members));
     if(!ok) toast("Échec de la sauvegarde");
   }
-  async function saveNote(key, value, statusEl){
-    const ok = await dbSet(key, value);
-    if(ok){
-      statusEl.textContent = 'Enregistré';
-      setTimeout(()=>{ if(statusEl.textContent==='Enregistré') statusEl.textContent=''; }, 1500);
-    } else {
-      statusEl.textContent = 'Échec de la sauvegarde';
-    }
-  }
 
 
   function toast(msg){
@@ -1596,18 +1763,6 @@
     el.addEventListener('click', ()=>goto(el.dataset.goto));
   });
 
-  // ---------- notes (print / blank) ----------
-  function wireNote(id, key){
-    const el = document.getElementById(id);
-    const statusEl = document.getElementById('status-' + id.replace('note-',''));
-    el.addEventListener('input', ()=>{
-      statusEl.textContent = 'Écriture...';
-      clearTimeout(saveNoteTimer);
-      saveNoteTimer = setTimeout(()=>saveNote(key, el.value, statusEl), 700);
-    });
-  }
-  wireNote('note-print', 'note-print');
-  wireNote('note-blank', 'note-blank');
 
   // ---------- notes per member ----------
   const TEAM_NOTES_KEY = '__team__';
