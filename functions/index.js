@@ -20,6 +20,46 @@ function parseTasks(snap){
   catch(e){ return []; }
 }
 
+// Prénoms de l'équipe et jetons FCM par prénom.
+async function loadMembersAndTokens(){
+  const membersSnap = await db.collection('app_data').doc('members').get();
+  const members = membersSnap.exists ? JSON.parse(membersSnap.data().value || '[]') : [];
+  const tokensSnap = await db.collection('fcm_tokens').get();
+  const tokensByMember = {};
+  tokensSnap.forEach(doc=>{
+    const {member, token} = doc.data();
+    if(!member || !token) return;
+    (tokensByMember[member] = tokensByMember[member] || []).push(token);
+  });
+  return {members, tokensByMember};
+}
+
+// Envoie une notification aux prénoms donnés ; ajoute les jetons invalides à `invalidTokens`.
+// Message « data » uniquement : c'est le service worker qui affiche la notification
+// (sinon elle apparaîtrait en double).
+async function notifyMembers(names, tokensByMember, data, invalidTokens){
+  const tokens = [...new Set(names.flatMap(name=>tokensByMember[name] || []))];
+  if(tokens.length === 0) return;
+  const res = await admin.messaging().sendEachForMulticast({
+    tokens,
+    data,
+    webpush: { headers: { Urgency: 'high' } }
+  });
+  res.responses.forEach((r, i)=>{
+    if(!r.success && r.error && INVALID_TOKEN_ERRORS.has(r.error.code)){
+      invalidTokens.add(tokens[i]);
+    }
+  });
+}
+
+// Nettoie les jetons d'appareils désinstallés ou expirés.
+function deleteTokens(invalidTokens){
+  return Promise.all([...invalidTokens].map(t=>db.collection('fcm_tokens').doc(t).delete()));
+}
+
+const assigneesOf = (task, members) => task.allTeam ? members : (task.assignees || []);
+const whoLabel = task => task.allTeam ? "Toute l'équipe" : (task.assignees || []).join(', ');
+
 exports.notifyNewTasks = functions.firestore
   .document('app_data/tasks')
   .onWrite(async (change)=>{
@@ -29,45 +69,63 @@ exports.notifyNewTasks = functions.firestore
     const newTasks = after.filter(t=>!knownIds.has(t.id));
     if(newTasks.length === 0) return;
 
-    const membersSnap = await db.collection('app_data').doc('members').get();
-    const members = membersSnap.exists ? JSON.parse(membersSnap.data().value || '[]') : [];
-
-    const tokensSnap = await db.collection('fcm_tokens').get();
-    const tokensByMember = {};
-    tokensSnap.forEach(doc=>{
-      const {member, token} = doc.data();
-      if(!member || !token) return;
-      (tokensByMember[member] = tokensByMember[member] || []).push(token);
-    });
-
+    const {members, tokensByMember} = await loadMembersAndTokens();
     const invalidTokens = new Set();
     for(const task of newTasks){
-      const recipients = (task.allTeam ? members : (task.assignees || []))
+      const recipients = assigneesOf(task, members)
         .filter(name=>name !== task.createdBy); // pas de push à l'auteur de la tâche
-      const tokens = [...new Set(recipients.flatMap(name=>tokensByMember[name] || []))];
-      if(tokens.length === 0) continue;
-
-      const who = task.allTeam ? "Toute l'équipe" : (task.assignees || []).join(', ');
-      // Message « data » uniquement : c'est le service worker qui affiche la
-      // notification (sinon elle apparaîtrait en double).
-      const res = await admin.messaging().sendEachForMulticast({
-        tokens,
-        data: {
-          title: 'Nouvelle tâche — ARMY NOÏSY',
-          body: `${task.title} — assignée à ${who}`,
-          tag: String(task.id)
-        },
-        webpush: { headers: { Urgency: 'high' } }
-      });
-      res.responses.forEach((r, i)=>{
-        if(!r.success && r.error && INVALID_TOKEN_ERRORS.has(r.error.code)){
-          invalidTokens.add(tokens[i]);
-        }
-      });
+      await notifyMembers(recipients, tokensByMember, {
+        title: 'Nouvelle tâche — ARMY NOÏSY',
+        body: `${task.title} — assignée à ${whoLabel(task)}`,
+        tag: String(task.id)
+      }, invalidTokens);
     }
+    await deleteTokens(invalidTokens);
+  });
 
-    // Nettoie les jetons d'appareils désinstallés ou expirés.
-    await Promise.all([...invalidTokens].map(t=>db.collection('fcm_tokens').doc(t).delete()));
+// ---------- Rappels d'échéance ----------
+// Chaque matin à 9 h (heure de Paris) : rappel aux assignés des tâches non terminées
+// dont l'échéance est demain ou aujourd'hui (tâches hebdomadaires comprises,
+// même règle que taskOccursOn dans index.html).
+const REMINDER_TZ = 'Europe/Paris';
+
+function isoInZone(date, timeZone){
+  // en-CA donne AAAA-MM-JJ.
+  return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
+}
+
+function taskOccursOn(task, iso){
+  if(!task.due) return false;
+  if(task.due === iso) return true;
+  if(task.repeat === 'weekly' && iso > task.due){
+    const dueDay = new Date(task.due + 'T00:00:00Z').getUTCDay();
+    return dueDay === new Date(iso + 'T00:00:00Z').getUTCDay();
+  }
+  return false;
+}
+
+exports.remindTasks = functions.pubsub
+  .schedule('0 9 * * *')
+  .timeZone(REMINDER_TZ)
+  .onRun(async ()=>{
+    const now = new Date();
+    const today = isoInZone(now, REMINDER_TZ);
+    const tomorrow = isoInZone(new Date(now.getTime() + 24 * 3600 * 1000), REMINDER_TZ);
+
+    const tasks = parseTasks(await db.collection('app_data').doc('tasks').get())
+      .filter(t=>t.status !== 'done');
+    const {members, tokensByMember} = await loadMembersAndTokens();
+    const invalidTokens = new Set();
+    for(const task of tasks){
+      const when = taskOccursOn(task, today) ? "aujourd'hui" : (taskOccursOn(task, tomorrow) ? 'demain' : null);
+      if(!when) continue;
+      await notifyMembers(assigneesOf(task, members), tokensByMember, {
+        title: `Rappel : à faire ${when} — ARMY NOÏSY`,
+        body: `${task.title} — ${whoLabel(task)}`,
+        tag: `rappel-${task.id}-${when === 'demain' ? tomorrow : today}`
+      }, invalidTokens);
+    }
+    await deleteTokens(invalidTokens);
   });
 
 // ---------- Shopify : commandes à envoyer + produits actifs ----------
