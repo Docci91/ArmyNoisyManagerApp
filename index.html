@@ -1085,6 +1085,10 @@
   }
   .prep-qty.many{ background:var(--blue); color:#fff; }
   .prep-late{ margin-left:6px; font-size:14px; cursor:help; }
+  .kind-table td{ vertical-align:middle; }
+  .kind-table .kind-type{ font-family:var(--font-display); font-size:16px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; }
+  .kind-table tr.kind-first td{ border-top:1px solid var(--ink-soft); }
+  .kind-size{ display:inline-block; min-width:34px; padding:2px 6px; border-radius:6px; background:var(--surface-2); font-weight:700; font-size:12.5px; }
   /* Article à préparer déjà disponible dans l'onglet Stock : « N en stock » en vert. */
   .prep-stock{ display:block; margin-top:3px; font-size:11px; font-weight:700; color:var(--ok); white-space:nowrap; }
   @media (max-width:899px){
@@ -1636,6 +1640,82 @@
   }
   const prepLabel = r => r.variant ? `${r.title} - ${r.variant}` : r.title;
 
+  // ---------- récapitulatif par type / couleur / taille (pièces à sortir) ----------
+  // Type « pièce de base », plus fin que dans le Stock : un sweat, un hoodie et un
+  // hoodie zip ne sont pas la même pièce. Ordre = ordre d'affichage ; le premier qui
+  // correspond au titre gagne (« G*CCI HAT HOODIE » → Hoodie, pas Casquette).
+  let kindRulesCache = null;
+  const kindRules = () => kindRulesCache || (kindRulesCache = [
+    ['Hoodie zip', 'hoodies?\\s*zip|zip\\s*hoodies?|zip[\\s-]?up'],
+    ['Hoodie',     'hoodies?|sweats?\\s+à\\s+capuche'],
+    ['Sweat',      'sweats?|crewnecks?'],
+    ['Veste',      'jackets?|vestes?|blousons?|bombers?|doudounes?|parkas?|manteaux?|manteau|coats?|windbreakers?|coupe[\\s-]?vents?|overshirts?|surchemises?'],
+    ['Polo',       'polos?'],
+    ['T-shirt',    't[\\s-]?shirts?|tee[\\s-]?shirts?|tees?|débardeurs?|tank\\s?tops?'],
+    ['Jogger',     'joggers?|joggings?'],
+    ['Pants',      'pants?|pantalons?|cargos?|jeans?'],
+    ['Short',      'shorts?'],
+    ['Bonnet',     'beanies?|bonnets?'],
+    ['Casquette',  'casquettes?|caps?|hats?'],
+    ['Sac',        'tote\\s?bags?|bags?|sacs?'],
+    ['Chaussettes','chaussettes?|socks?']
+  ].map(([label, alts])=>({label, re: word(alts)})));
+  const SIZE_ORDER = ['XXS','XS','S','M','L','XL','XXL','2XL','XXXL','3XL','4XL','TU','UNIQUE'];
+  function itemKind(title){
+    const rules = kindRules();
+    const i = rules.findIndex(k=>matches(k.re, title));
+    return i >= 0 ? i : rules.length; // « Autre »
+  }
+  // Couleur et taille d'un article de commande : d'après les options Shopify de la
+  // variante si on la connaît, sinon d'après « S / GRIS ».
+  function itemColorSize(it){
+    let options = null;
+    for(const p of ((shopifyProducts && shopifyProducts.products) || [])){
+      const v = p.variants.find(x=>(it.variantId && x.id === it.variantId) || (it.sku && x.sku === it.sku));
+      if(v){ options = v.options; break; }
+    }
+    if(!options || !options.length){
+      // « S / GRIS » : la taille est la partie qui ressemble à une taille.
+      const parts = (it.variant || '').split(' / ').filter(Boolean);
+      const si = parts.findIndex(x=>SIZE_ORDER.includes(x.toUpperCase()));
+      return si >= 0
+        ? {size: parts[si], color: parts.filter((x, i)=>i !== si).join(' / ')}
+        : {size: '', color: parts.join(' / ')};
+    }
+    const {size, group} = splitVariant(it.variant, options);
+    // Produit sans option « Taille » (bonnet, casquette…) : l'option unique est une couleur.
+    return options.some(o=>SIZE_OPTION.test(o.name)) ? {size, color: group} : {size: '', color: [group, size].filter(Boolean).join(' / ')};
+  }
+  const TITLE_COLORS = [
+    ['NOIR', 'black|noir|noire'], ['BLANC', 'white|blanc|blanche'], ['GRIS', 'grey|gray|gris|grise'],
+    ['ROUGE', 'red|rouge'], ['BLEU', 'blue|bleu|bleue|navy|marine'], ['ROSE', 'pink|rose'],
+    ['VERT', 'green|vert|verte|kaki|khaki'], ['BEIGE', 'beige|sand|crème|creme|cream'],
+    ['VIOLET', 'purple|violet|violette'], ['JAUNE', 'yellow|jaune'], ['MARRON', 'brown|marron']
+  ];
+  function colorFromTitle(title){
+    const hit = TITLE_COLORS.find(([, alts])=>matches(word(alts), title));
+    return hit ? hit[0] : '';
+  }
+  function buildKindRows(orders){
+    const map = new Map();
+    orders.forEach(o=>o.items.forEach(it=>{
+      const kind = itemKind(it.title);
+      const cs = itemColorSize(it);
+      // Option combinée du type « CASQUETTE BEIGE TEE BLANC » : on garde la couleur de la pièce.
+      let color = cs.color.replace(/^.*(?<!\p{L})(?:tee|t-shirt|hoodie|sweat)\s+/iu, '');
+      const size = cs.size;
+      // Pas d'option couleur : couleur écrite dans le titre (« JOGGER NOÏSY LOGO BLACK »).
+      if(!color) color = colorFromTitle(it.title);
+      const key = kind + '|' + color.toUpperCase() + '|' + size.toUpperCase();
+      const row = map.get(key) || {kind, label: kind < kindRules().length ? kindRules()[kind].label : 'Autre', color, size, qty: 0};
+      row.qty += it.qty;
+      map.set(key, row);
+    }));
+    const sizeRank = x=>{ const i = SIZE_ORDER.indexOf(x.toUpperCase()); return i < 0 ? 99 : i; };
+    return [...map.values()].sort((a,b)=> (a.kind - b.kind) || a.color.localeCompare(b.color, 'fr') || (sizeRank(a.size) - sizeRank(b.size)));
+  }
+  const kindLabel = r => [r.label, r.color, r.size].filter(Boolean).join(' · ');
+
   // Imprime le tableau « articles à préparer » sur fond blanc, via une iframe cachée.
   function printPrepList(){
     const orders = (shopifyOrders && shopifyOrders.orders) || [];
@@ -1646,7 +1726,8 @@
     const html = `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Articles à préparer</title>
       <style>
         body{ font-family:-apple-system, 'Segoe UI', Roboto, sans-serif; color:#111; margin:24px; }
-        h1{ font-size:18px; margin:0 0 4px; } .meta{ font-size:12px; color:#555; margin-bottom:16px; }
+        h1{ font-size:18px; margin:0 0 4px; }
+        h2{ font-size:15px; margin:28px 0 8px; page-break-after:avoid; } .meta{ font-size:12px; color:#555; margin-bottom:16px; }
         table{ width:100%; border-collapse:collapse; font-size:13px; }
         th{ font-size:12px; text-transform:uppercase; border-bottom:2px solid #111; padding:6px 8px; text-align:left; }
         td{ border-bottom:1px dashed #bbb; padding:8px; vertical-align:middle; }
@@ -1665,6 +1746,15 @@
         <td><div class="art">${r.image ? `<img src="${escapeHtml(r.image)}" alt="">` : '<div class="ph"></div>'}<span>${escapeHtml(prepLabel(r))}</span></div></td>
         <td class="sku">${escapeHtml(r.sku || '—')}</td>
         <td class="center"><span class="qty${r.qty > 1 ? ' many' : ''}">${r.qty}</span>${r.late ? ' ⏰' : ''}<span class="check"></span></td>
+      </tr>`).join('')}
+      </tbody></table>
+      <h2>Pièces à sortir par type</h2>
+      <table><thead><tr><th>Type</th><th>Couleur</th><th class="center">Taille</th><th class="center">Qté</th></tr></thead><tbody>
+      ${buildKindRows(orders).map(r=>`<tr>
+        <td><strong>${escapeHtml(r.label)}</strong></td>
+        <td>${escapeHtml(r.color || '—')}</td>
+        <td class="center">${escapeHtml(r.size || '—')}</td>
+        <td class="center"><span class="qty${r.qty > 1 ? ' many' : ''}">${r.qty}</span><span class="check"></span></td>
       </tr>`).join('')}
       </tbody></table></body></html>`;
     const frame = document.createElement('iframe');
@@ -1726,6 +1816,7 @@
     }
 
     const rows = buildPrepRows(orders);
+    const kindRows = buildKindRows(orders);
     const totalItems = rows.reduce((n,r)=>n + r.qty, 0);
 
     body.innerHTML = `
@@ -1744,6 +1835,20 @@
               </div></td>
               <td class="prep-sku">${escapeHtml(r.sku || '—')}${r.inStock > 0 ? `<span class="prep-stock">${r.inStock} en stock</span>` : ''}</td>
               <td class="center"><span class="prep-qty${r.qty > 1 ? ' many' : ''}">${r.qty}</span>${r.late ? `<span class="prep-late" title="Commande de plus de ${LATE_DAYS} jours (la plus ancienne : ${fmt(r.oldest)})">⏰</span>` : ''}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div class="section-title" style="margin-bottom:10px;">Pièces à sortir par type</div>
+      <div class="orders-table-wrap">
+        <table class="orders-table kind-table">
+          <thead><tr><th>Type</th><th>Couleur</th><th class="center">Taille</th><th class="center">Qté</th></tr></thead>
+          <tbody>
+            ${kindRows.map((r, i)=>`<tr${i > 0 && kindRows[i - 1].kind !== r.kind ? ' class="kind-first"' : ''}>
+              <td class="kind-type">${escapeHtml(r.label)}</td>
+              <td>${escapeHtml(r.color || '—')}</td>
+              <td class="center"><span class="kind-size">${escapeHtml(r.size || '—')}</span></td>
+              <td class="center"><span class="prep-qty${r.qty > 1 ? ' many' : ''}">${r.qty}</span></td>
             </tr>`).join('')}
           </tbody>
         </table>
