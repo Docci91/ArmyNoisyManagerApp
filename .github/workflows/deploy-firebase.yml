@@ -1,0 +1,39 @@
+# Redéploie les Cloud Functions et les règles Firestore à chaque modification
+# poussée sur main (le site, lui, est servi directement par GitHub Pages).
+# Secret requis dans le dépôt : FIREBASE_TOKEN (obtenu avec `firebase login:ci`).
+name: Déployer Firebase
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'functions/**'
+      - 'firestore.rules'
+      - 'firebase.json'
+      - '.github/workflows/deploy-firebase.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: firebase-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Installer les dépendances des fonctions
+        run: npm ci
+        working-directory: functions
+
+      - name: Déployer
+        run: npx --yes firebase-tools@15 deploy --only functions,firestore:rules --project armynoisymanagerapp --non-interactive --force
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
