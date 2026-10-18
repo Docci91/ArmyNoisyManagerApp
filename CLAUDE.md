@@ -52,20 +52,19 @@ Thème sombre façon app fitness : fond `#101114`, cartes `#1B1D22`, accent oran
 
 ## État actuel et reste à faire
 
-Le code client des notifications push est en ligne, avec la clé VAPID : chaque appareil enregistre son jeton dans `fcm_tokens`. La Cloud Function `notifyNewTasks` (`functions/index.js`) est écrite mais **pas encore déployée** : tant qu'elle ne l'est pas, seules les notifications navigateur de `watchTasks` marchent, et seulement quand l'app est ouverte.
+Le code client des notifications push est en ligne, avec la clé VAPID : chaque appareil enregistre son jeton dans `fcm_tokens`. La Cloud Function `notifyNewTasks` (`functions/index.js`) est **déployée depuis le 18/10/2026** (avec `syncShopifyScheduled`, `syncShopifyOnRequest` et les règles Firestore).
 
 Fonctionnement : à chaque écriture de `app_data/tasks`, elle compare avant/après, et pour chaque nouvelle tâche envoie un message FCM « data » (`title`, `body`, `tag`) aux jetons des assignés (tous les `members` si `allTeam`), sauf à `createdBy`. Le service worker affiche la notification ; ne pas passer à un message avec champ `notification`, sinon elle s'affiche en double. Les jetons invalides sont supprimés de `fcm_tokens`.
 
-**Reste à faire (rappeler à Dorian quand il est sur son PC)**, depuis son ordinateur ou Cloud Shell (https://shell.cloud.google.com, marche aussi sur iPhone) (Node 22 ou plus récent et `npm install -g firebase-tools`, puis `firebase login`) :
-1. ~~Passer le projet au plan Blaze~~ : fait le 17/10/2026.
-2. À la racine du dépôt : `cd functions && npm install && cd ..`, puis `firebase deploy --only functions,firestore:rules`.
-3. Si le déploiement échoue, lire le message d'erreur affiché avant la dernière ligne. `firebase.json` n'a volontairement pas d'étape `predeploy` (c'est elle qui causait l'erreur « functions predeploy error » chez Dorian).
+**Redéployer après une modif de `functions/` ou `firestore.rules`** (depuis le PC de Dorian, Windows/PowerShell, ou Cloud Shell) : télécharger le dépôt, `cd functions && npm install && cd ..`, puis `firebase deploy --only functions,firestore:rules`. Si « Authentication Error » : `firebase login --reauth`. `firebase.json` n'a volontairement pas d'étape `predeploy`.
+
+Premier déploiement (18/10/2026), ce qui a été nécessaire : plan Blaze ; runtime Node 22 (`engines` dans `functions/package.json`) ; donner au compte de service `95639638697-compute@developer.gserviceaccount.com` les rôles Cloud Build Service Account, Lecteur des objets Storage, Rédacteur Artifact Registry et Rédacteur de journaux (sinon « Build failed: Access to bucket gcf-sources-… denied »).
 
 ### Shopify (commandes à faire et liste du stock)
 
 `syncShopify` (dans `functions/index.js`, commandes + produits actifs) tourne toutes les 15 min et à chaque écriture de `app_data/shopify-sync-request`. Elle obtient un jeton (valable 24 h) par *client credentials grant* puis lit l'API Admin GraphQL (`SHOPIFY_API_VERSION`, à remonter quand Shopify retire la version). Le jeton Shopify ne doit **jamais** être dans `index.html` (site public) : tout passe par la fonction.
 
-Mise en place, à faire par Dorian avant le `firebase deploy` (sinon le déploiement échoue faute de secrets) :
+Mise en place (**faite le 18/10/2026** : app « ARMY NOISY Manager » sur le Dev Dashboard, boutique `mstwntdnetwork.myshopify.com`, 3 secrets enregistrés) :
 1. Sur https://dev.shopify.com (Dev Dashboard, même organisation que la boutique) : créer une app, lui donner les scopes `read_orders` et `read_products`, publier une version et l'installer sur la boutique. Récupérer l'identifiant client et le secret client dans les paramètres de l'app.
 2. `firebase functions:secrets:set SHOPIFY_STORE` (ex. `army-noisy.myshopify.com`), puis `SHOPIFY_CLIENT_ID`, puis `SHOPIFY_CLIENT_SECRET`.
 3. Déployer (étape 2 ci-dessus). Pour ne déployer que les notifications sans Shopify : `firebase deploy --only functions:notifyNewTasks,firestore:rules`.
