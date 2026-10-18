@@ -981,10 +981,7 @@
   }
   .prep-qty.many{ background:var(--blue); color:#fff; }
   .prep-late{ margin-left:6px; font-size:14px; cursor:help; }
-  /* Article à préparer déjà disponible dans l'onglet Stock : contour rouge. */
-  .prep-table tr.in-stock td{ box-shadow:inset 0 2px 0 #FF3B30, inset 0 -2px 0 #FF3B30; }
-  .prep-table tr.in-stock td:first-child{ box-shadow:inset 2px 0 0 #FF3B30, inset 0 2px 0 #FF3B30, inset 0 -2px 0 #FF3B30; }
-  .prep-table tr.in-stock td:last-child{ box-shadow:inset -2px 0 0 #FF3B30, inset 0 2px 0 #FF3B30, inset 0 -2px 0 #FF3B30; }
+  /* Article à préparer déjà disponible dans l'onglet Stock : « N en stock » en rouge. */
   .prep-stock{ display:block; margin-top:3px; font-size:11px; font-weight:700; color:#FF3B30; white-space:nowrap; }
   @media (max-width:899px){
     .prep-img{ width:40px; height:40px; }
@@ -1612,7 +1609,7 @@
         <table class="orders-table prep-table">
           <thead><tr><th>Article</th><th>SKU</th><th class="center">Qté</th></tr></thead>
           <tbody>
-            ${rows.map(r=>`<tr${r.inStock > 0 ? ' class="in-stock" title="Disponible dans le stock"' : ''}>
+            ${rows.map(r=>`<tr>
               <td><div class="prep-article">
                 ${r.image ? `<img class="prep-img" src="${escapeHtml(r.image)}" alt="" loading="lazy">` : `<div class="prep-img">${escapeHtml(initials(r.title))}</div>`}
                 <span>${escapeHtml(prepLabel(r))}</span>
