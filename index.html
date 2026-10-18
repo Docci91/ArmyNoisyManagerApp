@@ -1601,7 +1601,8 @@
   const word = alts => new RegExp(`(?<!\\p{L})(?:${alts})(?!\\p{L})`, 'giu');
   const ARTICLE_TYPES = [
     {label: 'Hoodie',  re: word('hoodies?|sweats?(?:\\s+à\\s+capuche)?|crewnecks?')},
-    {label: 'T-shirt', re: word('t[\\s-]?shirts?|tee[\\s-]?shirts?|tees?|débardeurs?|tank\\s?tops?')},
+    {label: 'Veste',   re: word('jackets?|vestes?|blousons?|bombers?|doudounes?|parkas?|manteaux?|manteau|coats?|windbreakers?|coupe[\\s-]?vents?|overshirts?|surchemises?')},
+    {label: 'T-shirt', re: word('t[\\s-]?shirts?|tee[\\s-]?shirts?|tees?|polos?|débardeurs?|tank\\s?tops?')},
     {label: 'Pants',   re: word('pants?|pantalons?|joggers?|joggings?|cargos?|shorts?|jeans?')}
   ];
   const ACCESSORY_WORDS = word('casquettes?|caps?|bonnets?|beanies?|bobs?|sacs?|tote\\s?bags?|bags?|chaussettes?|socks?|porte[\\s-]?clés?|keychains?|stickers?|accessoires?');
@@ -1613,6 +1614,9 @@
     return j >= 0 ? j : ARTICLE_TYPES.length; // accessoires et le reste
   }
   function articleName(title){
+    // Titres du type "PEARL" DICKIES JACKET : le nom du modèle est entre guillemets.
+    const quoted = title.match(/["“«]\s*([^"”»]+?)\s*["”»]/);
+    if(quoted) return quoted[1];
     let name = title;
     ARTICLE_TYPES.forEach(t=>{ name = name.replace(t.re, ' '); });
     name = name.replace(ACCESSORY_WORDS, ' ')
