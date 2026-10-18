@@ -71,6 +71,18 @@ Mise en place (**faite le 18/10/2026** : app « ARMY NOISY Manager » sur le Dev
 
 `read_orders` ne donne accès qu'aux 60 derniers jours de commandes, suffisant pour des commandes à expédier.
 
+### Prochaine tâche : refaire les SKU Shopify (demandé par Dorian le 17/10/2026)
+
+Format `TNOM-COL-TAILLE`, ex. t-shirt « Grillz » blanc S → `TGRLZ-WHT-S` :
+- **T** = une lettre par type d'article, commune à tous les articles du même type (H hoodie, T t-shirt, C casquette, S sweat…) ; signaler à Dorian si deux types tombent sur la même lettre.
+- **NOM** : 5 lettres max (diminutif reconnaissable, ex. GRLZ) ; différencier deux produits qui donneraient le même.
+- **COL** : couleur en **3 lettres** (validé par Dorian) : BLK, WHT, RED, BLU, GRY, BEI…
+- **TAILLE** : telle quelle (XS, S, M, L, XL, XXL).
+
+Procédure : lire tous les produits et variantes via le connecteur Shopify, montrer à Dorian un tableau ancien SKU → nouveau SKU, **ne rien modifier avant sa validation**, garder une copie des anciens SKU, puis appliquer. Les SKU sont recopiés dans `stock_items` (champ `sku`) : ils se mettront à jour au prochain +/− ; l'affichage du Stock prend ceux de `shopify-products` (synchro toutes les 15 min).
+
+Notifications push vérifiées en production le 18/10/2026 (app fermée sur iPhone).
+
 ## Pièges connus
 
 - **Dates** : ne jamais utiliser `toISOString().slice(0,10)` pour « aujourd'hui » (décalage UTC). Utiliser `isoLocal()` et `todayIsoLocal()`.
