@@ -543,6 +543,9 @@
     margin-bottom:10px;
   }
   .stock-row.retired{ border-style:dashed; }
+  /* Article avec du stock : contour rouge (même rouge que dans Commandes). */
+  .stock-row.has-stock{ border:2px solid #FF3B30; }
+  .stock-row.has-stock.retired{ border-style:dashed; }
   .stock-row.collapsed{ padding:6px 12px; cursor:pointer; opacity:.75; }
   .stock-row.collapsed:hover{ opacity:1; }
   .stock-row.collapsed .stock-img{ width:34px; height:34px; font-size:11px; }
@@ -1827,7 +1830,7 @@
       const img = r.image
         ? `<img class="stock-img" src="${escapeHtml(r.image)}" alt="" loading="lazy">`
         : `<div class="stock-img">${escapeHtml(initials(r.title))}</div>`;
-      return `${header}<div class="stock-row${r.retired ? ' retired' : ''}${collapsed ? ' collapsed' : ''}" data-row="${escapeHtml(r.key)}">
+      return `${header}<div class="stock-row${r.retired ? ' retired' : ''}${total > 0 ? ' has-stock' : ''}${collapsed ? ' collapsed' : ''}" data-row="${escapeHtml(r.key)}">
         <div class="stock-info" role="button" tabindex="0" aria-expanded="${open}" title="${collapsed ? 'Afficher les tailles' : 'Replier'}">
           ${img}
           <div style="min-width:0;">
