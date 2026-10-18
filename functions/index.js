@@ -112,7 +112,10 @@ const PRODUCTS_QUERY = `
         productType
         featuredMedia { preview { image { url(transform: { maxWidth: 160, maxHeight: 160 }) } } }
         variants(first: 100) {
-          nodes { legacyResourceId title sku selectedOptions { name value } }
+          nodes {
+            legacyResourceId title sku selectedOptions { name value }
+            media(first: 1) { nodes { preview { image { url(transform: { maxWidth: 160, maxHeight: 160 }) } } } }
+          }
         }
       }
       pageInfo { hasNextPage endCursor }
@@ -176,18 +179,24 @@ async function fetchOpenOrders(store, token){
   return orders;
 }
 
+function mediaUrl(media){
+  return (media && media.preview && media.preview.image && media.preview.image.url) || '';
+}
+
 async function fetchActiveProducts(store, token){
   const nodes = await shopifyQueryAll(store, token, PRODUCTS_QUERY, 'products');
   return nodes.map(p=>({
     id: p.legacyResourceId,
     title: p.title,
     productType: p.productType || '',
-    image: (p.featuredMedia && p.featuredMedia.preview && p.featuredMedia.preview.image && p.featuredMedia.preview.image.url) || '',
+    image: mediaUrl(p.featuredMedia),
     variants: p.variants.nodes.map(v=>({
       id: v.legacyResourceId,
       // Shopify nomme « Default Title » la variante unique d'un produit sans options.
       title: v.title === 'Default Title' ? '' : v.title,
       sku: v.sku || '',
+      // Image de la variante (souvent la photo de la couleur) ; sinon on prend celle du produit.
+      image: mediaUrl(v.media && v.media.nodes[0]),
       // Options (taille, couleur…) pour regrouper les tailles d'un article sur une ligne.
       options: v.selectedOptions.filter(o=>o.value !== 'Default Title').map(o=>({ name: o.name, value: o.value }))
     }))
