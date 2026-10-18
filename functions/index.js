@@ -109,8 +109,9 @@ const PRODUCTS_QUERY = `
       nodes {
         legacyResourceId
         title
+        featuredMedia { preview { image { url(transform: { maxWidth: 160, maxHeight: 160 }) } } }
         variants(first: 100) {
-          nodes { legacyResourceId title sku }
+          nodes { legacyResourceId title sku selectedOptions { name value } }
         }
       }
       pageInfo { hasNextPage endCursor }
@@ -179,11 +180,14 @@ async function fetchActiveProducts(store, token){
   return nodes.map(p=>({
     id: p.legacyResourceId,
     title: p.title,
+    image: (p.featuredMedia && p.featuredMedia.preview && p.featuredMedia.preview.image && p.featuredMedia.preview.image.url) || '',
     variants: p.variants.nodes.map(v=>({
       id: v.legacyResourceId,
       // Shopify nomme « Default Title » la variante unique d'un produit sans options.
       title: v.title === 'Default Title' ? '' : v.title,
-      sku: v.sku || ''
+      sku: v.sku || '',
+      // Options (taille, couleur…) pour regrouper les tailles d'un article sur une ligne.
+      options: v.selectedOptions.filter(o=>o.value !== 'Default Title').map(o=>({ name: o.name, value: o.value }))
     }))
   }));
 }

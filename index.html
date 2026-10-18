@@ -525,60 +525,78 @@
 
   /* ---------- stock (Shopify products, manual quantities) ---------- */
   .stock-search{ margin-bottom:16px; }
-  .stock-product{
+  .stock-row{
+    display:flex; align-items:center; gap:14px; flex-wrap:wrap;
     background:var(--card);
     border:1px solid var(--line);
     border-radius:var(--radius-md);
-    margin-bottom:14px;
-    overflow:hidden;
+    padding:10px 12px;
+    margin-bottom:10px;
   }
-  .stock-product.retired{ border-style:dashed; }
-  .stock-product-head{
-    display:flex; align-items:center; justify-content:space-between; gap:10px;
-    padding:12px 14px;
-    border-bottom:1px solid var(--line);
+  .stock-row.retired{ border-style:dashed; }
+  .stock-info{ display:flex; align-items:center; gap:12px; flex:1 1 220px; min-width:0; }
+  .stock-img{
+    width:56px; height:56px; flex-shrink:0;
+    border-radius:var(--radius-sm);
+    background:var(--surface-2);
+    object-fit:cover;
+    display:flex; align-items:center; justify-content:center;
+    font-weight:700; font-size:15px; color:var(--ink-soft);
   }
-  .stock-product-title{ font-weight:700; font-size:14.5px; }
-  .stock-product-total{ font-size:12px; color:var(--ink-soft); white-space:nowrap; }
+  .stock-name{ font-weight:700; font-size:14.5px; line-height:1.25; }
+  .stock-sub{ font-size:12px; color:var(--ink-soft); margin-top:2px; }
+  .stock-sub .stock-color{ color:var(--ink); font-weight:600; }
   .stock-badge{
     display:inline-block;
-    margin-left:8px;
-    padding:2px 8px;
+    margin-left:6px;
+    padding:1px 7px;
     border-radius:999px;
-    font-size:10.5px;
+    font-size:10px;
     font-weight:700;
-    letter-spacing:.02em;
     color:var(--blue);
     border:1px solid var(--blue);
     vertical-align:middle;
     white-space:nowrap;
   }
-  .stock-variant{
-    display:flex; align-items:center; justify-content:space-between; gap:10px;
-    padding:9px 14px;
-    border-bottom:1px solid var(--line);
+  .stock-sizes{ display:flex; flex-wrap:wrap; gap:8px; }
+  .stock-size{
+    display:flex; flex-direction:column; align-items:center; gap:4px;
+    background:var(--surface-2);
+    border:1px solid var(--line);
+    border-radius:var(--radius-sm);
+    padding:6px 6px 7px;
   }
-  .stock-variant:last-child{ border-bottom:none; }
-  .stock-variant-name{ font-size:13.5px; min-width:0; }
-  .stock-variant-sku{ display:block; font-size:11.5px; color:var(--ink-soft); }
-  .stock-qty{ display:flex; align-items:center; gap:6px; flex-shrink:0; }
+  .stock-size.retired{ border-style:dashed; border-color:var(--blue); }
+  .stock-size-label{ font-size:11.5px; font-weight:700; letter-spacing:.03em; }
+  .stock-size.retired .stock-size-label{ color:var(--blue); }
+  .stock-qty{ display:flex; align-items:center; gap:3px; }
   .stock-qty button{
-    width:32px; height:32px;
+    width:26px; height:26px;
     border-radius:50%;
     border:1px solid var(--line);
-    background:var(--surface-2);
+    background:var(--card);
     color:var(--ink);
-    font-size:17px;
+    font-size:15px;
     line-height:1;
+    padding:0;
     cursor:pointer;
   }
   .stock-qty input{
-    width:56px;
+    width:40px;
     text-align:center;
-    padding:6px 4px;
+    padding:4px 2px;
     font-weight:700;
+    -moz-appearance:textfield;
   }
+  .stock-qty input::-webkit-outer-spin-button,
+  .stock-qty input::-webkit-inner-spin-button{ -webkit-appearance:none; margin:0; }
   .stock-qty input.zero{ color:var(--ink-soft); font-weight:500; }
+  @media (max-width:899px){
+    .stock-sizes{ gap:6px; }
+    .stock-size{ padding:5px 4px 6px; }
+    .stock-qty button{ width:24px; height:24px; font-size:14px; }
+    .stock-qty input{ width:32px; }
+  }
 
   /* ---------- notes ---------- */
   .member-tabs{
@@ -1537,30 +1555,66 @@
   }
 
   // Produits à afficher : actifs Shopify + variantes en stock qui n'y sont plus.
+  // Taille = option « Taille »/« Size », sinon la dernière option ; le reste (souvent
+  // la couleur) sert à regrouper les variantes sur une même ligne.
+  const SIZE_OPTION = /^(taille|size|pointure)$/i;
+  function splitVariant(title, options){
+    const opts = (options && options.length) ? options
+      : (title ? title.split(' / ').map((value, i, all)=>({name: i === all.length - 1 ? 'Taille' : '', value})) : []);
+    let sizeIdx = opts.findIndex(o=>SIZE_OPTION.test(o.name));
+    if(sizeIdx < 0) sizeIdx = opts.length - 1;
+    return {
+      size: sizeIdx >= 0 ? opts[sizeIdx].value : '',
+      group: opts.filter((o, i)=>i !== sizeIdx).map(o=>o.value).join(' / ')
+    };
+  }
+
+  // SKU commun aux variantes d'une ligne, sans le dernier segment (la taille) :
+  // TGRLZ-WHT-S, TGRLZ-WHT-M → TGRLZ-WHT.
+  function baseSku(skus){
+    const list = skus.filter(Boolean);
+    if(list.length === 0) return '';
+    if(list.length === 1) return list[0];
+    let prefix = list[0];
+    list.forEach(sku=>{ while(!sku.startsWith(prefix)) prefix = prefix.slice(0, -1); });
+    return prefix.replace(/[-_\s]+$/, '');
+  }
+
+  // Lignes à afficher : une par produit (et par couleur s'il y en a plusieurs), avec
+  // ses tailles. Produits actifs Shopify + variantes en stock qui n'y sont plus.
   function buildStockList(){
-    const list = [];
-    const byProduct = new Map();
+    const rows = [];
+    const rowFor = new Map(); // productId + groupe -> ligne
     const activeVariantIds = new Set();
+    const productInfo = new Map();
+    const addVariant = (productId, productTitle, image, productRetired, v)=>{
+      const {size, group} = splitVariant(v.title, v.options);
+      const key = productId + '||' + group;
+      let row = rowFor.get(key);
+      if(!row){
+        row = {productId, title: productTitle, group, image, retired: productRetired, variants: []};
+        rowFor.set(key, row);
+        rows.push(row);
+      }
+      row.variants.push({id: v.id, size, title: v.title, sku: v.sku, retired: v.retired});
+    };
     ((shopifyProducts && shopifyProducts.products) || []).forEach(p=>{
-      const entry = {id: p.id, title: p.title, retired: false,
-        variants: p.variants.map(v=>({id: v.id, title: v.title, sku: v.sku, retired: false}))};
-      p.variants.forEach(v=>activeVariantIds.add(v.id));
-      byProduct.set(p.id, entry);
-      list.push(entry);
+      productInfo.set(p.id, p);
+      p.variants.forEach(v=>{
+        activeVariantIds.add(v.id);
+        addVariant(p.id, p.title, p.image || '', false, {...v, retired: false});
+      });
     });
     if(shopifyProducts){
       Object.entries(stockItems).forEach(([variantId, item])=>{
         if(activeVariantIds.has(variantId) || stockQty(variantId) <= 0) return;
-        let entry = byProduct.get(item.productId);
-        if(!entry){
-          entry = {id: item.productId, title: item.productTitle || 'Produit inconnu', retired: true, variants: []};
-          byProduct.set(item.productId, entry);
-          list.push(entry);
-        }
-        entry.variants.push({id: variantId, title: item.variantTitle || '', sku: item.sku || '', retired: true});
+        const active = productInfo.get(item.productId);
+        addVariant(item.productId, active ? active.title : (item.productTitle || 'Produit inconnu'),
+          active ? (active.image || '') : (item.image || ''), !active,
+          {id: variantId, title: item.variantTitle || '', sku: item.sku || '', retired: true});
       });
     }
-    return list.sort((a,b)=> (a.retired - b.retired) || a.title.localeCompare(b.title, 'fr'));
+    return rows.sort((a,b)=> (a.retired - b.retired) || a.title.localeCompare(b.title, 'fr') || a.group.localeCompare(b.group, 'fr'));
   }
 
   function renderStock(){
@@ -1577,47 +1631,57 @@
       return;
     }
     const term = document.getElementById('stock-search').value.trim().toLowerCase();
-    const list = buildStockList().map(p=>{
-      if(!term || p.title.toLowerCase().includes(term)) return p;
-      const variants = p.variants.filter(v=>(v.title + ' ' + v.sku).toLowerCase().includes(term));
-      return variants.length ? {...p, variants} : null;
+    const rows = buildStockList().map(r=>{
+      if(!term || (r.title + ' ' + r.group).toLowerCase().includes(term)) return r;
+      const variants = r.variants.filter(v=>(v.size + ' ' + v.sku).toLowerCase().includes(term));
+      return variants.length ? {...r, variants} : null;
     }).filter(Boolean);
-    if(list.length === 0){
+    if(rows.length === 0){
       body.innerHTML = `<div class="empty">${term ? 'Aucun produit ne correspond à la recherche.' : 'Aucun produit actif sur Shopify.'}</div>`;
       return;
     }
-    const retiredBadge = '<span class="stock-badge">Plus en vente</span>';
-    body.innerHTML = list.map(p=>{
-      const total = p.variants.reduce((n,v)=>n + stockQty(v.id), 0);
-      return `<div class="stock-product${p.retired ? ' retired' : ''}">
-        <div class="stock-product-head">
-          <div class="stock-product-title">${escapeHtml(p.title)}${p.retired ? retiredBadge : ''}</div>
-          <div class="stock-product-total">${total} en stock</div>
+    body.innerHTML = rows.map(r=>{
+      const total = r.variants.reduce((n,v)=>n + stockQty(v.id), 0);
+      const sku = baseSku(r.variants.map(v=>v.sku));
+      const img = r.image
+        ? `<img class="stock-img" src="${escapeHtml(r.image)}" alt="" loading="lazy">`
+        : `<div class="stock-img">${escapeHtml(initials(r.title))}</div>`;
+      return `<div class="stock-row${r.retired ? ' retired' : ''}">
+        <div class="stock-info">
+          ${img}
+          <div style="min-width:0;">
+            <div class="stock-name">${escapeHtml(r.title)}${r.retired ? '<span class="stock-badge">Plus en vente</span>' : ''}</div>
+            <div class="stock-sub">${r.group ? `<span class="stock-color">${escapeHtml(r.group)}</span> · ` : ''}${sku ? escapeHtml(sku) + ' · ' : ''}${total} en stock</div>
+          </div>
         </div>
-        ${p.variants.map(v=>{
-          const qty = stockQty(v.id);
-          return `<div class="stock-variant">
-            <div class="stock-variant-name">${escapeHtml(v.title || 'Taille unique')}${v.retired && !p.retired ? retiredBadge : ''}${v.sku ? `<span class="stock-variant-sku">${escapeHtml(v.sku)}</span>` : ''}</div>
-            <div class="stock-qty" data-variant="${escapeHtml(v.id)}" data-product="${escapeHtml(p.id)}">
-              <button type="button" data-delta="-1" aria-label="Retirer 1">−</button>
-              <input type="number" inputmode="numeric" min="0" value="${qty}" class="${qty === 0 ? 'zero' : ''}" aria-label="Quantité">
-              <button type="button" data-delta="1" aria-label="Ajouter 1">+</button>
-            </div>
-          </div>`;
-        }).join('')}
+        <div class="stock-sizes">
+          ${r.variants.map(v=>{
+            const qty = stockQty(v.id);
+            const retired = v.retired && !r.retired;
+            return `<div class="stock-size${retired ? ' retired' : ''}"${retired ? ' title="Plus en vente"' : ''}${v.sku ? ` data-sku="${escapeHtml(v.sku)}"` : ''}>
+              <span class="stock-size-label">${escapeHtml(v.size || 'Unique')}${retired ? ' ✕' : ''}</span>
+              <div class="stock-qty" data-variant="${escapeHtml(v.id)}" data-product="${escapeHtml(r.productId)}">
+                <button type="button" data-delta="-1" aria-label="Retirer 1">−</button>
+                <input type="number" inputmode="numeric" min="0" value="${qty}" class="${qty === 0 ? 'zero' : ''}" aria-label="Quantité ${escapeHtml(v.size || '')}">
+                <button type="button" data-delta="1" aria-label="Ajouter 1">+</button>
+              </div>
+            </div>`;
+          }).join('')}
+        </div>
       </div>`;
     }).join('');
   }
 
   // Infos recopiées dans stock_items pour retrouver le produit s'il quitte Shopify.
   function stockMeta(productId, variantId){
-    const p = buildStockList().find(x=>x.id === productId);
-    const v = p && p.variants.find(x=>x.id === variantId);
+    const row = buildStockList().find(r=>r.productId === productId && r.variants.some(x=>x.id === variantId));
+    const v = row && row.variants.find(x=>x.id === variantId);
     return {
       productId,
-      productTitle: p ? p.title : '',
+      productTitle: row ? row.title : '',
       variantTitle: v ? v.title : '',
       sku: v ? v.sku : '',
+      image: row ? row.image : '',
       updatedAt: new Date().toISOString(),
       updatedBy: currentUser || ''
     };
