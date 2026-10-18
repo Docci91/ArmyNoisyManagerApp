@@ -56,7 +56,7 @@ Le code client des notifications push est en ligne, avec la clé VAPID : chaque 
 
 Fonctionnement : à chaque écriture de `app_data/tasks`, elle compare avant/après, et pour chaque nouvelle tâche envoie un message FCM « data » (`title`, `body`, `tag`) aux jetons des assignés (tous les `members` si `allTeam`), sauf à `createdBy`. Le service worker affiche la notification ; ne pas passer à un message avec champ `notification`, sinon elle s'affiche en double. Les jetons invalides sont supprimés de `fcm_tokens`.
 
-**Reste à faire (rappeler à Dorian quand il est sur son PC)**, depuis son ordinateur ou Cloud Shell (https://shell.cloud.google.com, marche aussi sur iPhone) (Node 20 et `npm install -g firebase-tools`, puis `firebase login`) :
+**Reste à faire (rappeler à Dorian quand il est sur son PC)**, depuis son ordinateur ou Cloud Shell (https://shell.cloud.google.com, marche aussi sur iPhone) (Node 22 ou plus récent et `npm install -g firebase-tools`, puis `firebase login`) :
 1. ~~Passer le projet au plan Blaze~~ : fait le 17/10/2026.
 2. À la racine du dépôt : `cd functions && npm install && cd ..`, puis `firebase deploy --only functions,firestore:rules`.
 3. Si le déploiement échoue, lire le message d'erreur affiché avant la dernière ligne. `firebase.json` n'a volontairement pas d'étape `predeploy` (c'est elle qui causait l'erreur « functions predeploy error » chez Dorian).
