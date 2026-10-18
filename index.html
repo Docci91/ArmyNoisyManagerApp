@@ -1647,6 +1647,8 @@
         rowFor.set(key, row);
         rows.push(row);
       }
+      // Image de la ligne : la première variante (couleur) qui en a une, sinon celle du produit.
+      if(v.image && (!row.variantImage)){ row.variantImage = true; row.image = v.image; }
       row.variants.push({id: v.id, size, title: v.title, sku: v.sku, retired: v.retired});
     };
     ((shopifyProducts && shopifyProducts.products) || []).forEach(p=>{
