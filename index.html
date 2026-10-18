@@ -543,6 +543,11 @@
     margin-bottom:10px;
   }
   .stock-row.retired{ border-style:dashed; }
+  .stock-row.collapsed{ padding:6px 12px; cursor:pointer; opacity:.75; }
+  .stock-row.collapsed:hover{ opacity:1; }
+  .stock-row.collapsed .stock-img{ width:34px; height:34px; font-size:11px; }
+  .stock-row.collapsed .stock-name{ font-size:13.5px; font-weight:600; }
+  .stock-expand{ margin-left:auto; font-size:12px; color:var(--ink-soft); white-space:nowrap; }
   .stock-info{ display:flex; align-items:center; gap:12px; flex:1 1 220px; min-width:0; }
   .stock-img{
     width:56px; height:56px; flex-shrink:0;
@@ -1541,6 +1546,7 @@
   let stockItems = {};        // variantId -> {qty, productId, productTitle, variantTitle, sku}
   let stockWatching = false;
   let stockRenderPending = false;
+  const stockExpanded = new Set(); // lignes à 0 que l'on a dépliées ou modifiées
 
   function watchStock(){
     if(typeof db === 'undefined' || stockWatching) return;
@@ -1654,7 +1660,11 @@
           {id: variantId, title: item.variantTitle || '', sku: item.sku || '', retired: true});
       });
     }
-    return rows.sort((a,b)=> a.nameKey.localeCompare(b.nameKey, 'fr') || (a.typeRank - b.typeRank)
+    // Accessoires tout en haut (quel que soit leur nom), puis par modèle et par type.
+    const isAcc = r => r.typeRank === ARTICLE_TYPES.length;
+    rows.forEach(r=>{ r.key = r.productId + '||' + r.group; r.section = isAcc(r) ? 'Accessoires' : r.name; });
+    return rows.sort((a,b)=> (isAcc(b) - isAcc(a))
+      || (isAcc(a) ? 0 : a.nameKey.localeCompare(b.nameKey, 'fr') || (a.typeRank - b.typeRank))
       || a.title.localeCompare(b.title, 'fr') || a.group.localeCompare(b.group, 'fr'));
   }
 
@@ -1682,22 +1692,25 @@
       return;
     }
     body.innerHTML = rows.map((r, i)=>{
-      const header = (i === 0 || rows[i - 1].nameKey !== r.nameKey)
-        ? `<div class="stock-group-title">${escapeHtml(r.name)}</div>` : '';
+      const header = (i === 0 || rows[i - 1].section !== r.section)
+        ? `<div class="stock-group-title">${escapeHtml(r.section)}</div>` : '';
       const total = r.variants.reduce((n,v)=>n + stockQty(v.id), 0);
+      // Les articles sans stock sont repliés (sauf recherche ou ouverts à la main).
+      const collapsed = total === 0 && !term && !stockExpanded.has(r.key);
       const sku = baseSku(r.variants.map(v=>v.sku));
       const img = r.image
         ? `<img class="stock-img" src="${escapeHtml(r.image)}" alt="" loading="lazy">`
         : `<div class="stock-img">${escapeHtml(initials(r.title))}</div>`;
-      return `${header}<div class="stock-row${r.retired ? ' retired' : ''}">
-        <div class="stock-info">
+      return `${header}<div class="stock-row${r.retired ? ' retired' : ''}${collapsed ? ' collapsed' : ''}" data-row="${escapeHtml(r.key)}">
+        <div class="stock-info"${collapsed ? ' role="button" tabindex="0" title="Afficher les tailles"' : ''}>
           ${img}
           <div style="min-width:0;">
             <div class="stock-name">${escapeHtml(r.title)}${r.retired ? '<span class="stock-badge">Plus en vente</span>' : ''}</div>
             <div class="stock-sub">${r.group ? `<span class="stock-color">${escapeHtml(r.group)}</span> · ` : ''}${sku ? escapeHtml(sku) + ' · ' : ''}${total} en stock</div>
           </div>
+          ${collapsed ? '<span class="stock-expand">Afficher ▾</span>' : ''}
         </div>
-        <div class="stock-sizes">
+        ${collapsed ? '' : `<div class="stock-sizes">
           ${r.variants.map(v=>{
             const qty = stockQty(v.id);
             const retired = v.retired && !r.retired;
@@ -1710,7 +1723,7 @@
               </div>
             </div>`;
           }).join('')}
-        </div>
+        </div>`}
       </div>`;
     }).join('');
   }
@@ -1742,9 +1755,17 @@
 
   const stockBody = document.getElementById('stock-body');
   stockBody.addEventListener('click', (e)=>{
+    const folded = e.target.closest('.stock-row.collapsed');
+    if(folded){
+      stockExpanded.add(folded.dataset.row);
+      renderStock();
+      return;
+    }
     const btn = e.target.closest('button[data-delta]');
     if(!btn) return;
     const wrap = btn.closest('.stock-qty');
+    // Une ligne modifiée reste ouverte même si elle retombe à 0.
+    stockExpanded.add(btn.closest('.stock-row').dataset.row);
     const delta = Number(btn.dataset.delta);
     if(delta < 0 && stockQty(wrap.dataset.variant) <= 0) return;
     // increment() : deux personnes qui cliquent en même temps ne s'écrasent pas.
@@ -1752,6 +1773,7 @@
   });
   stockBody.addEventListener('change', (e)=>{
     if(!e.target.matches('.stock-qty input')) return;
+    stockExpanded.add(e.target.closest('.stock-row').dataset.row);
     const wrap = e.target.closest('.stock-qty');
     const qty = Math.max(0, parseInt(e.target.value, 10) || 0);
     writeStock(wrap.dataset.product, wrap.dataset.variant, qty);
@@ -1761,6 +1783,10 @@
   });
   stockBody.addEventListener('keydown', (e)=>{
     if(e.key === 'Enter' && e.target.matches('.stock-qty input')) e.target.blur();
+    if((e.key === 'Enter' || e.key === ' ') && e.target.closest('.stock-row.collapsed')){
+      e.preventDefault();
+      e.target.closest('.stock-row.collapsed').click();
+    }
   });
   document.getElementById('stock-search').addEventListener('input', renderStock);
 
