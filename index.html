@@ -525,6 +525,15 @@
 
   /* ---------- stock (Shopify products, manual quantities) ---------- */
   .stock-search{ margin-bottom:16px; }
+  .stock-group-title{
+    font-size:12px;
+    font-weight:700;
+    letter-spacing:.08em;
+    text-transform:uppercase;
+    color:var(--ink-soft);
+    margin:18px 2px 8px;
+  }
+  .stock-group-title:first-child{ margin-top:4px; }
   .stock-row{
     display:flex; align-items:center; gap:14px; flex-wrap:wrap;
     background:var(--card);
@@ -1580,6 +1589,34 @@
     return prefix.replace(/[-_\s]+$/, '');
   }
 
+  // Classement : par nom de modèle (« Hoodie Grillz » et « T-shirt Grillz » → Grillz),
+  // puis par type dans cet ordre. Le type vient du « Type de produit » Shopify, sinon du titre.
+  // Mot entier uniquement (« Capsule » ne doit pas être pris pour « cap »).
+  const word = alts => new RegExp(`(?<!\\p{L})(?:${alts})(?!\\p{L})`, 'giu');
+  const ARTICLE_TYPES = [
+    {label: 'Hoodie',  re: word('hoodies?|sweats?(?:\\s+à\\s+capuche)?|crewnecks?')},
+    {label: 'T-shirt', re: word('t[\\s-]?shirts?|tee[\\s-]?shirts?|tees?|débardeurs?|tank\\s?tops?')},
+    {label: 'Pants',   re: word('pants?|pantalons?|joggers?|joggings?|cargos?|shorts?|jeans?')}
+  ];
+  const ACCESSORY_WORDS = word('casquettes?|caps?|bonnets?|beanies?|bobs?|sacs?|tote\\s?bags?|bags?|chaussettes?|socks?|porte[\\s-]?clés?|keychains?|stickers?|accessoires?');
+  const matches = (re, text) => { re.lastIndex = 0; return re.test(text || ''); };
+  function articleType(title, productType){
+    const i = ARTICLE_TYPES.findIndex(t=>matches(t.re, productType));
+    if(i >= 0) return i;
+    const j = ARTICLE_TYPES.findIndex(t=>matches(t.re, title));
+    return j >= 0 ? j : ARTICLE_TYPES.length; // accessoires et le reste
+  }
+  function articleName(title){
+    let name = title;
+    ARTICLE_TYPES.forEach(t=>{ name = name.replace(t.re, ' '); });
+    name = name.replace(ACCESSORY_WORDS, ' ')
+      .replace(/[-–—|·:]+/g, ' ').replace(/\s+/g, ' ').trim();
+    return name || title;
+  }
+  function nameKey(name){
+    return name.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  }
+
   // Lignes à afficher : une par produit (et par couleur s'il y en a plusieurs), avec
   // ses tailles. Produits actifs Shopify + variantes en stock qui n'y sont plus.
   function buildStockList(){
@@ -1587,12 +1624,14 @@
     const rowFor = new Map(); // productId + groupe -> ligne
     const activeVariantIds = new Set();
     const productInfo = new Map();
-    const addVariant = (productId, productTitle, image, productRetired, v)=>{
+    const addVariant = (productId, productTitle, productType, image, productRetired, v)=>{
       const {size, group} = splitVariant(v.title, v.options);
       const key = productId + '||' + group;
       let row = rowFor.get(key);
       if(!row){
-        row = {productId, title: productTitle, group, image, retired: productRetired, variants: []};
+        const name = articleName(productTitle);
+        row = {productId, title: productTitle, group, image, retired: productRetired, variants: [],
+          name, nameKey: nameKey(name), typeRank: articleType(productTitle, productType)};
         rowFor.set(key, row);
         rows.push(row);
       }
@@ -1602,7 +1641,7 @@
       productInfo.set(p.id, p);
       p.variants.forEach(v=>{
         activeVariantIds.add(v.id);
-        addVariant(p.id, p.title, p.image || '', false, {...v, retired: false});
+        addVariant(p.id, p.title, p.productType || '', p.image || '', false, {...v, retired: false});
       });
     });
     if(shopifyProducts){
@@ -1610,11 +1649,13 @@
         if(activeVariantIds.has(variantId) || stockQty(variantId) <= 0) return;
         const active = productInfo.get(item.productId);
         addVariant(item.productId, active ? active.title : (item.productTitle || 'Produit inconnu'),
+          active ? (active.productType || '') : (item.productType || ''),
           active ? (active.image || '') : (item.image || ''), !active,
           {id: variantId, title: item.variantTitle || '', sku: item.sku || '', retired: true});
       });
     }
-    return rows.sort((a,b)=> (a.retired - b.retired) || a.title.localeCompare(b.title, 'fr') || a.group.localeCompare(b.group, 'fr'));
+    return rows.sort((a,b)=> a.nameKey.localeCompare(b.nameKey, 'fr') || (a.typeRank - b.typeRank)
+      || a.title.localeCompare(b.title, 'fr') || a.group.localeCompare(b.group, 'fr'));
   }
 
   function renderStock(){
@@ -1640,13 +1681,15 @@
       body.innerHTML = `<div class="empty">${term ? 'Aucun produit ne correspond à la recherche.' : 'Aucun produit actif sur Shopify.'}</div>`;
       return;
     }
-    body.innerHTML = rows.map(r=>{
+    body.innerHTML = rows.map((r, i)=>{
+      const header = (i === 0 || rows[i - 1].nameKey !== r.nameKey)
+        ? `<div class="stock-group-title">${escapeHtml(r.name)}</div>` : '';
       const total = r.variants.reduce((n,v)=>n + stockQty(v.id), 0);
       const sku = baseSku(r.variants.map(v=>v.sku));
       const img = r.image
         ? `<img class="stock-img" src="${escapeHtml(r.image)}" alt="" loading="lazy">`
         : `<div class="stock-img">${escapeHtml(initials(r.title))}</div>`;
-      return `<div class="stock-row${r.retired ? ' retired' : ''}">
+      return `${header}<div class="stock-row${r.retired ? ' retired' : ''}">
         <div class="stock-info">
           ${img}
           <div style="min-width:0;">
@@ -1682,6 +1725,7 @@
       variantTitle: v ? v.title : '',
       sku: v ? v.sku : '',
       image: row ? row.image : '',
+      productType: (((shopifyProducts && shopifyProducts.products) || []).find(x=>x.id === productId) || {}).productType || '',
       updatedAt: new Date().toISOString(),
       updatedBy: currentUser || ''
     };

@@ -109,6 +109,7 @@ const PRODUCTS_QUERY = `
       nodes {
         legacyResourceId
         title
+        productType
         featuredMedia { preview { image { url(transform: { maxWidth: 160, maxHeight: 160 }) } } }
         variants(first: 100) {
           nodes { legacyResourceId title sku selectedOptions { name value } }
@@ -180,6 +181,7 @@ async function fetchActiveProducts(store, token){
   return nodes.map(p=>({
     id: p.legacyResourceId,
     title: p.title,
+    productType: p.productType || '',
     image: (p.featuredMedia && p.featuredMedia.preview && p.featuredMedia.preview.image && p.featuredMedia.preview.image.url) || '',
     variants: p.variants.nodes.map(v=>({
       id: v.legacyResourceId,
