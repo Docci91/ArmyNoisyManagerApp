@@ -1085,8 +1085,23 @@
   }
   .prep-qty.many{ background:var(--blue); color:#fff; }
   .prep-late{ margin-left:6px; font-size:14px; cursor:help; }
+  .kind-details{ margin:0 0 22px; }
+  .kind-details summary{
+    list-style:none; cursor:pointer;
+    display:flex; align-items:center; gap:6px;
+    padding:10px 14px;
+    background:var(--card); border:1px solid var(--line); border-radius:var(--radius-sm);
+    font-size:13px; font-weight:600; color:var(--ink-soft);
+  }
+  .kind-details summary::-webkit-details-marker{ display:none; }
+  .kind-details summary::after{ content:'Afficher ▾'; margin-left:auto; font-size:12px; font-weight:500; }
+  .kind-details[open] summary::after{ content:'Replier ▴'; }
+  .kind-details[open] summary{ margin-bottom:8px; color:var(--ink); }
+  .kind-count{ font-weight:500; }
+  .kind-table{ font-size:12.5px; }
+  .kind-table td, .kind-table th{ padding:6px 12px; }
   .kind-table td{ vertical-align:middle; }
-  .kind-table .kind-type{ font-family:var(--font-display); font-size:16px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; }
+  .kind-table .kind-type{ font-weight:700; }
   .kind-table tr.kind-first td{ border-top:1px solid var(--ink-soft); }
   .kind-size{ display:inline-block; min-width:34px; padding:2px 6px; border-radius:6px; background:var(--surface-2); font-weight:700; font-size:12.5px; }
   /* Article à préparer déjà disponible dans l'onglet Stock : « N en stock » en vert. */
@@ -1789,6 +1804,13 @@
   lightbox.addEventListener('click', ()=>{ lightbox.hidden = true; });
   document.addEventListener('keydown', (e)=>{ if(e.key === 'Escape') lightbox.hidden = true; });
 
+  // Section « Pièces à sortir par type » repliée par défaut (surtout utile à l'impression) ;
+  // on garde le choix ouvert/fermé quand la page se redessine.
+  let kindOpen = false;
+  document.getElementById('orders-body').addEventListener('toggle', (e)=>{
+    if(e.target.id === 'kind-details') kindOpen = e.target.open;
+  }, true);
+
   function renderOrders(){
     renderDash();
     updateOrdersBadge();
@@ -1839,7 +1861,8 @@
           </tbody>
         </table>
       </div>
-      <div class="section-title" style="margin-bottom:10px;">Pièces à sortir par type</div>
+      <details class="kind-details" id="kind-details"${kindOpen ? ' open' : ''}>
+        <summary>Pièces à sortir par type <span class="kind-count">· ${totalItems} pièce${totalItems > 1 ? 's' : ''}</span></summary>
       <div class="orders-table-wrap">
         <table class="orders-table kind-table">
           <thead><tr><th>Type</th><th>Couleur</th><th class="center">Taille</th><th class="center">Qté</th></tr></thead>
@@ -1853,6 +1876,7 @@
           </tbody>
         </table>
       </div>
+      </details>
       <div class="section-title" style="margin-bottom:10px;">Détail par commande</div>
       ${orders.slice().sort((a,b)=> a.createdAt.localeCompare(b.createdAt)).map(o=>`
         <div class="order-card">
