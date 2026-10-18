@@ -959,6 +959,30 @@
   .orders-table .num{ text-align:right; white-space:nowrap; }
   .orders-table .qty{ font-weight:700; color:var(--blue); }
   .orders-table .sku{ display:block; font-size:11.5px; color:var(--ink-soft); }
+  .orders-actions{ display:flex; gap:8px; flex-shrink:0; }
+  .orders-table .center{ text-align:center; white-space:nowrap; }
+  .prep-table td{ vertical-align:middle; }
+  .prep-article{ display:flex; align-items:center; gap:12px; }
+  .prep-img{
+    width:52px; height:52px; flex-shrink:0;
+    border-radius:var(--radius-sm);
+    background:var(--surface-2);
+    object-fit:cover;
+    display:flex; align-items:center; justify-content:center;
+    font-weight:700; font-size:13px; color:var(--ink-soft);
+  }
+  .prep-sku{ font-size:12px; color:var(--ink-soft); white-space:nowrap; }
+  .prep-qty{
+    display:inline-block; min-width:24px; padding:2px 7px;
+    border-radius:8px; font-weight:700;
+  }
+  .prep-qty.many{ background:var(--blue); color:#fff; }
+  .prep-late{ margin-left:6px; font-size:14px; cursor:help; }
+  @media (max-width:899px){
+    .prep-img{ width:40px; height:40px; }
+    .prep-table td, .prep-table th{ padding:9px 8px; }
+    .prep-sku{ font-size:11px; white-space:normal; word-break:break-all; }
+  }
   .order-card{
     background:var(--card);
     border:1px solid var(--line);
@@ -1298,7 +1322,10 @@
           <div class="section-title">Commandes à faire</div>
           <div class="orders-sync" id="orders-sync">—</div>
         </div>
-        <button class="ghost" id="orders-refresh-btn">Actualiser</button>
+        <div class="orders-actions">
+          <button class="ghost" id="orders-print-btn">🖨 Imprimer</button>
+          <button class="ghost" id="orders-refresh-btn">Actualiser</button>
+        </div>
       </div>
       <div id="orders-body"><div class="empty">Chargement des commandes…</div></div>
     </section>
@@ -1451,6 +1478,85 @@
     }, (err)=>{ console.error(err); });
   }
 
+  // ---------- articles à préparer (tableau + impression) ----------
+  const LATE_DAYS = 14;
+
+  // Image d'un article de commande : celle de la ligne de commande, sinon celle de la
+  // variante ou du produit dans la liste Shopify (écran Stock).
+  function orderItemImage(it){
+    if(it.image) return it.image;
+    for(const p of ((shopifyProducts && shopifyProducts.products) || [])){
+      const v = p.variants.find(x=>(it.variantId && x.id === it.variantId) || (it.sku && x.sku === it.sku));
+      if(v) return v.image || p.image || '';
+    }
+    return '';
+  }
+
+  // Regroupe par produit + variante ; « late » si une des commandes a plus de LATE_DAYS jours.
+  function buildPrepRows(orders){
+    const byProduct = new Map();
+    const limit = Date.now() - LATE_DAYS * 86400000;
+    orders.forEach(o=>o.items.forEach(it=>{
+      const key = it.title + '||' + it.variant;
+      const row = byProduct.get(key) || {title: it.title, variant: it.variant, sku: it.sku, image: '', qty: 0, oldest: o.createdAt};
+      row.qty += it.qty;
+      if(!row.image) row.image = orderItemImage(it);
+      if(o.createdAt < row.oldest) row.oldest = o.createdAt;
+      byProduct.set(key, row);
+    }));
+    return [...byProduct.values()]
+      .map(r=>({...r, late: new Date(r.oldest).getTime() < limit}))
+      .sort((a,b)=> a.title.localeCompare(b.title, 'fr') || a.variant.localeCompare(b.variant, 'fr'));
+  }
+  const prepLabel = r => r.variant ? `${r.title} - ${r.variant}` : r.title;
+
+  // Imprime le tableau « articles à préparer » sur fond blanc, via une iframe cachée.
+  function printPrepList(){
+    const orders = (shopifyOrders && shopifyOrders.orders) || [];
+    const rows = buildPrepRows(orders);
+    if(rows.length === 0){ toast('Aucun article à préparer'); return; }
+    const total = rows.reduce((n,r)=>n + r.qty, 0);
+    const date = new Date().toLocaleString('fr-FR', {day:'numeric', month:'long', year:'numeric', hour:'2-digit', minute:'2-digit'});
+    const html = `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Articles à préparer</title>
+      <style>
+        body{ font-family:-apple-system, 'Segoe UI', Roboto, sans-serif; color:#111; margin:24px; }
+        h1{ font-size:18px; margin:0 0 4px; } .meta{ font-size:12px; color:#555; margin-bottom:16px; }
+        table{ width:100%; border-collapse:collapse; font-size:13px; }
+        th{ font-size:12px; text-transform:uppercase; border-bottom:2px solid #111; padding:6px 8px; text-align:left; }
+        td{ border-bottom:1px dashed #bbb; padding:8px; vertical-align:middle; }
+        tr{ page-break-inside:avoid; }
+        .art{ display:flex; align-items:center; gap:10px; }
+        img, .ph{ width:56px; height:56px; object-fit:cover; border-radius:6px; background:#eee; flex-shrink:0; }
+        .center{ text-align:center; white-space:nowrap; } .sku{ white-space:nowrap; }
+        .qty{ display:inline-block; min-width:22px; padding:2px 6px; border-radius:6px; font-weight:700; }
+        .qty.many{ background:#111; color:#fff; }
+        .check{ display:inline-block; width:14px; height:14px; border:1.5px solid #111; border-radius:3px; margin-left:10px; vertical-align:middle; }
+      </style></head><body>
+      <h1>ARMY NOÏSY — Articles à préparer</h1>
+      <div class="meta">${escapeHtml(date)} · ${orders.length} commande${orders.length>1?'s':''} · ${total} article${total>1?'s':''} · ⏰ = commande de plus de ${LATE_DAYS} jours</div>
+      <table><thead><tr><th>Article</th><th>SKU</th><th class="center">Qté</th></tr></thead><tbody>
+      ${rows.map(r=>`<tr>
+        <td><div class="art">${r.image ? `<img src="${escapeHtml(r.image)}" alt="">` : '<div class="ph"></div>'}<span>${escapeHtml(prepLabel(r))}</span></div></td>
+        <td class="sku">${escapeHtml(r.sku || '—')}</td>
+        <td class="center"><span class="qty${r.qty > 1 ? ' many' : ''}">${r.qty}</span>${r.late ? ' ⏰' : ''}<span class="check"></span></td>
+      </tr>`).join('')}
+      </tbody></table></body></html>`;
+    const frame = document.createElement('iframe');
+    frame.style.cssText = 'position:fixed; right:0; bottom:0; width:0; height:0; border:0;';
+    document.body.appendChild(frame);
+    const doc = frame.contentWindow.document;
+    doc.open(); doc.write(html); doc.close();
+    // Attendre les images avant d'imprimer.
+    const imgs = [...doc.images];
+    Promise.all(imgs.map(img=> img.complete ? null : new Promise(res=>{ img.onload = img.onerror = res; })))
+      .then(()=>{
+        frame.contentWindow.focus();
+        frame.contentWindow.print();
+        setTimeout(()=>frame.remove(), 60000);
+      });
+  }
+  document.getElementById('orders-print-btn').addEventListener('click', printPrepList);
+
   function renderOrders(){
     const syncEl = document.getElementById('orders-sync');
     const body = document.getElementById('orders-body');
@@ -1475,16 +1581,7 @@
       return;
     }
 
-    // Regroupe par produit + variante (taille, couleur…).
-    const byProduct = new Map();
-    orders.forEach(o=>o.items.forEach(it=>{
-      const key = it.title + '||' + it.variant;
-      const row = byProduct.get(key) || {title: it.title, variant: it.variant, sku: it.sku, qty: 0, orders: new Set()};
-      row.qty += it.qty;
-      row.orders.add(o.name);
-      byProduct.set(key, row);
-    }));
-    const rows = [...byProduct.values()].sort((a,b)=> b.qty - a.qty || a.title.localeCompare(b.title, 'fr'));
+    const rows = buildPrepRows(orders);
     const totalItems = rows.reduce((n,r)=>n + r.qty, 0);
 
     body.innerHTML = `
@@ -1493,14 +1590,16 @@
         <div class="orders-stat"><div class="orders-stat-value">${totalItems}</div><div class="orders-stat-label">article${totalItems>1?'s':''} à préparer</div></div>
       </div>
       <div class="orders-table-wrap">
-        <table class="orders-table">
-          <thead><tr><th>Produit</th><th>Variante</th><th class="num">Qté</th><th class="num">Commandes</th></tr></thead>
+        <table class="orders-table prep-table">
+          <thead><tr><th>Article</th><th>SKU</th><th class="center">Qté</th></tr></thead>
           <tbody>
             ${rows.map(r=>`<tr>
-              <td>${escapeHtml(r.title)}${r.sku ? `<span class="sku">${escapeHtml(r.sku)}</span>` : ''}</td>
-              <td>${escapeHtml(r.variant || '—')}</td>
-              <td class="num qty">${r.qty}</td>
-              <td class="num">${r.orders.size}</td>
+              <td><div class="prep-article">
+                ${r.image ? `<img class="prep-img" src="${escapeHtml(r.image)}" alt="" loading="lazy">` : `<div class="prep-img">${escapeHtml(initials(r.title))}</div>`}
+                <span>${escapeHtml(prepLabel(r))}</span>
+              </div></td>
+              <td class="prep-sku">${escapeHtml(r.sku || '—')}</td>
+              <td class="center"><span class="prep-qty${r.qty > 1 ? ' many' : ''}">${r.qty}</span>${r.late ? `<span class="prep-late" title="Commande de plus de ${LATE_DAYS} jours (la plus ancienne : ${fmt(r.oldest)})">⏰</span>` : ''}</td>
             </tr>`).join('')}
           </tbody>
         </table>
@@ -1557,6 +1656,7 @@
       const raw = docSnap.exists ? docSnap.data().value : null;
       try{ shopifyProducts = raw ? JSON.parse(raw) : null; }catch(e){ shopifyProducts = null; }
       renderStock();
+      renderOrders(); // les images des articles à préparer viennent aussi de cette liste
     }, (err)=>{ console.error(err); });
     db.collection('stock_items').onSnapshot((snap)=>{
       const next = {};
@@ -1884,7 +1984,7 @@
   }
   function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
   function initials(name){
-    return name.trim().split(/\s+/).map(w=>w[0]).slice(0,2).join('').toUpperCase();
+    return name.replace(/["“”«»]/g, '').trim().split(/\s+/).map(w=>w[0]).slice(0,2).join('').toUpperCase();
   }
   function escapeHtml(str){
     return String(str).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));

@@ -96,7 +96,11 @@ const ORDERS_QUERY = `
         name
         createdAt
         lineItems(first: 100) {
-          nodes { title variantTitle sku unfulfilledQuantity }
+          nodes {
+            title variantTitle sku unfulfilledQuantity
+            variant { legacyResourceId }
+            image { url(transform: { maxWidth: 160, maxHeight: 160 }) }
+          }
         }
       }
       pageInfo { hasNextPage endCursor }
@@ -167,7 +171,14 @@ async function fetchOpenOrders(store, token){
   nodes.forEach(o=>{
     const items = o.lineItems.nodes
       .filter(li=>li.unfulfilledQuantity > 0)
-      .map(li=>({ title: li.title, variant: li.variantTitle || '', sku: li.sku || '', qty: li.unfulfilledQuantity }));
+      .map(li=>({
+        title: li.title,
+        variant: li.variantTitle || '',
+        sku: li.sku || '',
+        qty: li.unfulfilledQuantity,
+        variantId: (li.variant && li.variant.legacyResourceId) || '',
+        image: (li.image && li.image.url) || ''
+      }));
     if(items.length) orders.push({
       id: o.legacyResourceId,
       name: o.name,
