@@ -547,6 +547,7 @@
   .stock-row.collapsed:hover{ opacity:1; }
   .stock-row.collapsed .stock-img{ width:34px; height:34px; font-size:11px; }
   .stock-row.collapsed .stock-name{ font-size:13.5px; font-weight:600; }
+  .stock-info{ cursor:pointer; }
   .stock-expand{ margin-left:auto; font-size:12px; color:var(--ink-soft); white-space:nowrap; }
   .stock-info{ display:flex; align-items:center; gap:12px; flex:1 1 220px; min-width:0; }
   .stock-img{
@@ -1546,7 +1547,8 @@
   let stockItems = {};        // variantId -> {qty, productId, productTitle, variantTitle, sku}
   let stockWatching = false;
   let stockRenderPending = false;
-  const stockExpanded = new Set(); // lignes à 0 que l'on a dépliées ou modifiées
+  // Choix d'ouverture fait à la main, par ligne (true = dépliée). Sans choix : repliée si 0 en stock.
+  const stockFold = new Map();
 
   function watchStock(){
     if(typeof db === 'undefined' || stockWatching) return;
@@ -1700,19 +1702,20 @@
         ? `<div class="stock-group-title">${escapeHtml(r.section)}</div>` : '';
       const total = r.variants.reduce((n,v)=>n + stockQty(v.id), 0);
       // Les articles sans stock sont repliés (sauf recherche ou ouverts à la main).
-      const collapsed = total === 0 && !term && !stockExpanded.has(r.key);
+      const open = term ? true : (stockFold.has(r.key) ? stockFold.get(r.key) : total > 0);
+      const collapsed = !open;
       const sku = baseSku(r.variants.map(v=>v.sku));
       const img = r.image
         ? `<img class="stock-img" src="${escapeHtml(r.image)}" alt="" loading="lazy">`
         : `<div class="stock-img">${escapeHtml(initials(r.title))}</div>`;
       return `${header}<div class="stock-row${r.retired ? ' retired' : ''}${collapsed ? ' collapsed' : ''}" data-row="${escapeHtml(r.key)}">
-        <div class="stock-info"${collapsed ? ' role="button" tabindex="0" title="Afficher les tailles"' : ''}>
+        <div class="stock-info" role="button" tabindex="0" aria-expanded="${open}" title="${collapsed ? 'Afficher les tailles' : 'Replier'}">
           ${img}
           <div style="min-width:0;">
             <div class="stock-name">${escapeHtml(r.title)}${r.retired ? '<span class="stock-badge">Plus en vente</span>' : ''}</div>
             <div class="stock-sub">${r.group ? `<span class="stock-color">${escapeHtml(r.group)}</span> · ` : ''}${sku ? escapeHtml(sku) + ' · ' : ''}${total} en stock</div>
           </div>
-          ${collapsed ? '<span class="stock-expand">Afficher ▾</span>' : ''}
+          ${term ? '' : `<span class="stock-expand">${collapsed ? 'Afficher ▾' : 'Replier ▴'}</span>`}
         </div>
         ${collapsed ? '' : `<div class="stock-sizes">
           ${r.variants.map(v=>{
@@ -1759,9 +1762,10 @@
 
   const stockBody = document.getElementById('stock-body');
   stockBody.addEventListener('click', (e)=>{
-    const folded = e.target.closest('.stock-row.collapsed');
-    if(folded){
-      stockExpanded.add(folded.dataset.row);
+    const toggle = e.target.closest('.stock-row.collapsed, .stock-info');
+    if(toggle && !document.getElementById('stock-search').value.trim()){
+      const row = toggle.closest('.stock-row');
+      stockFold.set(row.dataset.row, row.classList.contains('collapsed'));
       renderStock();
       return;
     }
@@ -1769,7 +1773,7 @@
     if(!btn) return;
     const wrap = btn.closest('.stock-qty');
     // Une ligne modifiée reste ouverte même si elle retombe à 0.
-    stockExpanded.add(btn.closest('.stock-row').dataset.row);
+    stockFold.set(btn.closest('.stock-row').dataset.row, true);
     const delta = Number(btn.dataset.delta);
     if(delta < 0 && stockQty(wrap.dataset.variant) <= 0) return;
     // increment() : deux personnes qui cliquent en même temps ne s'écrasent pas.
@@ -1777,7 +1781,7 @@
   });
   stockBody.addEventListener('change', (e)=>{
     if(!e.target.matches('.stock-qty input')) return;
-    stockExpanded.add(e.target.closest('.stock-row').dataset.row);
+    stockFold.set(e.target.closest('.stock-row').dataset.row, true);
     const wrap = e.target.closest('.stock-qty');
     const qty = Math.max(0, parseInt(e.target.value, 10) || 0);
     writeStock(wrap.dataset.product, wrap.dataset.variant, qty);
@@ -1787,9 +1791,9 @@
   });
   stockBody.addEventListener('keydown', (e)=>{
     if(e.key === 'Enter' && e.target.matches('.stock-qty input')) e.target.blur();
-    if((e.key === 'Enter' || e.key === ' ') && e.target.closest('.stock-row.collapsed')){
+    if((e.key === 'Enter' || e.key === ' ') && e.target.matches('.stock-info')){
       e.preventDefault();
-      e.target.closest('.stock-row.collapsed').click();
+      e.target.click();
     }
   });
   document.getElementById('stock-search').addEventListener('input', renderStock);
