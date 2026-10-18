@@ -125,6 +125,9 @@
     margin-bottom:22px;
   }
   @media (min-width:900px){ .home-dash{ grid-template-columns:repeat(4, 1fr); } }
+  .dash-hello{ grid-column:1 / -1; margin:2px 2px 4px; }
+  .dash-hello-name{ font-family:var(--font-display); font-size:26px; font-weight:800; letter-spacing:.03em; text-transform:uppercase; line-height:1.1; }
+  .dash-hello-date{ font-size:13px; color:var(--ink-soft); text-transform:capitalize; margin-top:2px; }
   .dash-tile{
     text-align:left;
     font-family:inherit;
@@ -513,7 +516,38 @@
   .card.p-high{border-left-color:var(--danger);}
   .card.p-med{border-left-color:#D6A017;}
   .card.p-low{border-left-color:var(--green);}
-  .card .title{font-weight:600; margin-bottom:6px;}
+  .card{ position:relative; }
+  .card .title{font-weight:600; margin-bottom:6px; padding-right:26px;}
+  .column h3{ font-family:var(--font-display); font-size:16px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink); }
+  .col-dot{ display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:8px; vertical-align:2px; }
+  .col-todo{ background:var(--ink-soft); }
+  .col-doing{ background:var(--blue); }
+  .col-done{ background:var(--ok); }
+  .prio-tag{
+    display:inline-block; margin-bottom:4px;
+    padding:1px 8px; border-radius:999px;
+    font-size:10.5px; font-weight:700; letter-spacing:.03em;
+  }
+  .prio-high{ color:var(--danger); background:rgba(255,59,48,.12); }
+  .prio-med{ color:#D6A017; background:rgba(214,160,23,.12); }
+  .prio-low{ color:var(--ok); background:rgba(61,190,110,.12); }
+  .drag-handle{
+    position:absolute; top:8px; right:8px;
+    width:26px; height:26px;
+    display:flex; align-items:center; justify-content:center;
+    border-radius:8px;
+    color:var(--ink-soft); font-size:16px;
+    cursor:grab; touch-action:none; user-select:none;
+  }
+  .drag-handle:hover{ background:var(--surface-2); color:var(--ink); }
+  .card.drag-source{ opacity:.35; }
+  .drag-ghost{
+    position:fixed; top:0; left:0; z-index:200;
+    pointer-events:none; margin:0;
+    box-shadow:0 14px 34px rgba(0,0,0,.55);
+  }
+  .column{ border-radius:var(--radius-md); transition:background .12s ease, outline-color .12s ease; outline:2px dashed transparent; outline-offset:4px; }
+  .column.drop-target{ background:rgba(255,90,54,.06); outline-color:var(--blue); }
   .card .meta{
     display:flex;
     justify-content:space-between;
@@ -650,6 +684,8 @@
   .stock-qty input::-webkit-outer-spin-button,
   .stock-qty input::-webkit-inner-spin-button{ -webkit-appearance:none; margin:0; }
   .stock-qty input.zero{ color:var(--ink-soft); font-weight:500; }
+  .stock-qty input.bump{ animation:qty-bump .35s ease-out; }
+  @keyframes qty-bump{ 0%{ transform:scale(1); } 35%{ transform:scale(1.28); color:var(--blue); border-color:var(--blue); } 100%{ transform:scale(1); } }
   @media (max-width:899px){
     .stock-sizes{ gap:6px; }
     .stock-size{ padding:5px 4px 6px; }
@@ -745,24 +781,37 @@
     background-position:center;
   }
   .login-card{
-    background:var(--card);
+    background:rgba(16,17,20,.55);
+    -webkit-backdrop-filter:blur(14px);
+    backdrop-filter:blur(14px);
     width:100%;
-    max-width:380px;
-    padding:30px 26px;
-    border:1px solid var(--line);
+    max-width:400px;
+    padding:34px 26px 28px;
+    border:1px solid rgba(255,255,255,.08);
     border-radius:var(--radius-lg);
+    box-shadow:0 20px 60px rgba(0,0,0,.45);
+    text-align:center;
+  }
+  .login-tagline{
+    font-family:var(--font-display);
+    font-size:13px; font-weight:600;
+    letter-spacing:.32em; text-transform:uppercase;
+    color:var(--ink-soft);
+    margin:-10px 0 26px;
   }
   .login-logo{
-    height:60px;
+    height:104px;
     width:auto;
     display:block;
     margin:0 auto 22px auto;
-    filter:invert(1);
   }
   .login-title{
-    font-size:16px;
-    font-weight:700;
-    margin-bottom:4px;
+    font-family:var(--font-display);
+    font-size:26px;
+    font-weight:800;
+    letter-spacing:.05em;
+    text-transform:uppercase;
+    margin-bottom:2px;
   }
   .login-sub{
     font-size:12.5px;
@@ -792,6 +841,16 @@
   }
   .member-tile:hover{border-color:var(--ink);}
   .member-tile .avatar{width:32px; height:32px; font-size:13px;}
+  #login-screen .member-tile{
+    padding:18px 8px 16px;
+    gap:10px;
+    font-family:var(--font-display);
+    font-size:17px; font-weight:700;
+    letter-spacing:.06em; text-transform:uppercase;
+    transition:transform .15s ease, border-color .15s ease;
+  }
+  #login-screen .member-tile:hover{ transform:translateY(-2px); border-color:var(--blue); }
+  #login-screen .member-tile .avatar{ width:50px; height:50px; font-size:18px; }
   .login-back{
     font-size:12.5px;
     font-weight:600;
@@ -931,15 +990,28 @@
     border-color:var(--danger);
   }
 
+  .lightbox{
+    position:fixed; inset:0; z-index:300;
+    background:rgba(0,0,0,.86);
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px;
+    padding:24px; cursor:zoom-out;
+    animation:screen-in .18s ease-out;
+  }
+  .lightbox[hidden]{ display:none; }
+  .lightbox img{ width:min(92vw, 560px); max-height:76vh; aspect-ratio:1; border-radius:var(--radius-md); background:#fff; object-fit:contain; }
+  .lightbox-caption{ font-family:var(--font-display); font-size:18px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; text-align:center; }
+  img.stock-img, img.prep-img{ cursor:zoom-in; }
   .toast{
 
     position:fixed;
     bottom:90px; left:50%;
     transform:translateX(-50%);
-    background:#000;
-    color:#fff;
+    background:var(--ink);
+    color:var(--bg);
+    font-weight:600;
+    box-shadow:0 8px 24px rgba(0,0,0,.4);
     font-size:13px;
-    padding:9px 16px;
+    padding:10px 18px;
     border-radius:var(--radius-sm);
     opacity:0;
     pointer-events:none;
@@ -1189,9 +1261,11 @@
 </head>
 <body>
 
+<div id="lightbox" class="lightbox" hidden><img alt=""><div class="lightbox-caption"></div></div>
 <div id="login-screen">
   <div class="login-card">
     <img src="" alt="ARMY NOÏSY" class="brand-logo login-logo" id="login-logo">
+    <div class="login-tagline">Espace équipe</div>
     <div id="login-body"></div>
   </div>
 </div>
@@ -1609,6 +1683,22 @@
   }
   document.getElementById('orders-print-btn').addEventListener('click', printPrepList);
 
+  // Photo en grand au tap sur une miniature (Stock et Commandes). Les miniatures
+  // Shopify sont en _160x160 : on demande la même image en 800 px.
+  const lightbox = document.getElementById('lightbox');
+  document.addEventListener('click', (e)=>{
+    const img = e.target.closest('img.stock-img, img.prep-img');
+    if(!img) return;
+    e.stopPropagation(); // ne pas replier la ligne du stock
+    const row = img.closest('.stock-row, tr');
+    const label = row && (row.querySelector('.stock-name, .prep-article span') || {}).textContent;
+    lightbox.querySelector('img').src = img.src.replace(/_160x160(?=\.)/, '_800x800');
+    lightbox.querySelector('.lightbox-caption').textContent = (label || '').replace('Plus en vente', '').trim();
+    lightbox.hidden = false;
+  }, true);
+  lightbox.addEventListener('click', ()=>{ lightbox.hidden = true; });
+  document.addEventListener('keydown', (e)=>{ if(e.key === 'Escape') lightbox.hidden = true; });
+
   function renderOrders(){
     renderDash();
     updateOrdersBadge();
@@ -1890,6 +1980,11 @@
         </div>`}
       </div>`;
     }).join('');
+    if(bumpVariant){
+      const input = body.querySelector(`.stock-qty[data-variant="${CSS.escape(bumpVariant)}"] input`);
+      bumpVariant = null;
+      if(input){ input.classList.remove('bump'); void input.offsetWidth; input.classList.add('bump'); }
+    }
   }
 
   // Infos recopiées dans stock_items pour retrouver le produit s'il quitte Shopify.
@@ -1917,6 +2012,15 @@
     }
   }
 
+  // Retour visuel d'un changement de stock : le chiffre « rebondit », petite
+  // vibration (Android ; l'iPhone ne la propose pas aux sites web) et message en bas.
+  let bumpVariant = null, stockToastTimer = null;
+  function stockFeedback(variantId){
+    bumpVariant = variantId;
+    if(navigator.vibrate) navigator.vibrate(12);
+    clearTimeout(stockToastTimer);
+    stockToastTimer = setTimeout(()=>toast('Stock mis à jour'), 700);
+  }
   const stockBody = document.getElementById('stock-body');
   stockBody.addEventListener('click', (e)=>{
     const toggle = e.target.closest('.stock-row.collapsed, .stock-info');
@@ -1933,6 +2037,7 @@
     stockFold.set(btn.closest('.stock-row').dataset.row, true);
     const delta = Number(btn.dataset.delta);
     if(delta < 0 && stockQty(wrap.dataset.variant) <= 0) return;
+    stockFeedback(wrap.dataset.variant);
     // increment() : deux personnes qui cliquent en même temps ne s'écrasent pas.
     writeStock(wrap.dataset.product, wrap.dataset.variant, firebase.firestore.FieldValue.increment(delta));
   });
@@ -1941,6 +2046,7 @@
     stockFold.set(e.target.closest('.stock-row').dataset.row, true);
     const wrap = e.target.closest('.stock-qty');
     const qty = Math.max(0, parseInt(e.target.value, 10) || 0);
+    stockFeedback(wrap.dataset.variant);
     writeStock(wrap.dataset.product, wrap.dataset.variant, qty);
   });
   stockBody.addEventListener('focusout', ()=>{
@@ -2281,6 +2387,7 @@
     repeatChk.checked = false;
     await saveTasks();
     renderHome(); renderBoard();
+    toast('Tâche ajoutée');
   }
 
   // Tuiles de l'accueil : commandes, articles déjà en stock, retards, tâches du jour.
@@ -2302,7 +2409,9 @@
     const todayTasks = tasks.filter(t=>t.status !== 'done' && taskOccursOn(t, today)).length;
     const tile = (goto, icon, value, label, cls)=>
       `<button class="dash-tile${cls ? ' ' + cls : ''}" data-goto="${goto}"><span class="dash-icon">${icon}</span><span class="dash-value">${value}</span><span class="dash-label">${label}</span></button>`;
+    const date = new Date().toLocaleDateString('fr-FR', {weekday:'long', day:'numeric', month:'long'});
     el.innerHTML =
+      `<div class="dash-hello"><div class="dash-hello-name">Salut ${escapeHtml(currentUser || '')} 👋</div><div class="dash-hello-date">${escapeHtml(date)}</div></div>` +
       tile('orders', '📦', orders.length, `commande${orders.length > 1 ? 's' : ''} à envoyer`) +
       tile('orders', '✅', ready, `article${ready > 1 ? 's' : ''} déjà en stock`, ready > 0 ? 'ok' : '') +
       tile('orders', '⏰', late, `en retard (+${LATE_DAYS} j)`, late > 0 ? 'alert' : '') +
@@ -2669,6 +2778,71 @@
   }
 
   // ---------- tasks / board ----------
+  // Glisser-déposer des cartes entre colonnes (souris et doigt) : on attrape la
+  // poignée ⠿, la carte suit le pointeur, et on la lâche sur une colonne.
+  (function setupBoardDrag(){
+    const board = document.getElementById('board');
+    let drag = null;
+    const columnAt = (x, y)=>{
+      const el = document.elementFromPoint(x, y);
+      return el && el.closest('#board .column');
+    };
+    board.addEventListener('pointerdown', (e)=>{
+      const handle = e.target.closest('.drag-handle');
+      if(!handle) return;
+      const card = handle.closest('.card');
+      e.preventDefault();
+      const r = card.getBoundingClientRect();
+      const ghost = card.cloneNode(true);
+      ghost.classList.add('drag-ghost');
+      ghost.style.width = r.width + 'px';
+      document.body.appendChild(ghost);
+      card.classList.add('drag-source');
+      drag = {card, ghost, dx: e.clientX - r.left, dy: e.clientY - r.top, over: null, x: e.clientX, y: e.clientY};
+      moveGhost(e);
+      handle.setPointerCapture(e.pointerId);
+      requestAnimationFrame(autoScroll);
+    });
+    // Sur téléphone les colonnes sont empilées : près du haut/bas de l'écran, on fait défiler.
+    function autoScroll(){
+      if(!drag) return;
+      const edge = 90, h = window.innerHeight;
+      const step = drag.y > h - edge ? 14 : (drag.y < edge ? -14 : 0);
+      if(step){ window.scrollBy(0, step); moveGhost({clientX: drag.x, clientY: drag.y}); }
+      requestAnimationFrame(autoScroll);
+    }
+    function moveGhost(e){
+      drag.x = e.clientX; drag.y = e.clientY;
+      drag.ghost.style.transform = `translate(${e.clientX - drag.dx}px, ${e.clientY - drag.dy}px) rotate(2deg)`;
+      const col = columnAt(e.clientX, e.clientY);
+      if(col !== drag.over){
+        if(drag.over) drag.over.classList.remove('drop-target');
+        if(col) col.classList.add('drop-target');
+        drag.over = col;
+      }
+    }
+    board.addEventListener('pointermove', (e)=>{ if(drag) moveGhost(e); });
+    const end = async ()=>{
+      if(!drag) return;
+      const {card, ghost, over} = drag;
+      drag = null;
+      ghost.remove();
+      card.classList.remove('drag-source');
+      if(over) over.classList.remove('drop-target');
+      const task = tasks.find(t=>t.id === card.dataset.id);
+      if(over && task && over.dataset.status !== task.status){
+        task.status = over.dataset.status;
+        renderBoard(); renderHome();
+        await saveTasks();
+        toast(`Tâche déplacée : ${COLUMNS.find(c=>c.key === task.status).label}`);
+      }
+    };
+    board.addEventListener('pointerup', end);
+    board.addEventListener('pointercancel', end);
+    // Un clic sur la poignée ne doit pas ouvrir la fiche de la tâche.
+    board.addEventListener('click', (e)=>{ if(e.target.closest('.drag-handle')) e.stopPropagation(); }, true);
+  })();
+
   function renderBoard(){
     const board = document.getElementById('board');
     board.innerHTML = '';
@@ -2683,7 +2857,8 @@
       const colTasks = filtered.filter(t=>t.status === col.key);
       const colEl = document.createElement('div');
       colEl.className = 'column';
-      colEl.innerHTML = `<h3>${col.label} <span class="count">${colTasks.length}</span></h3>`;
+      colEl.dataset.status = col.key;
+      colEl.innerHTML = `<h3><span><span class="col-dot col-${col.key}"></span>${col.label} · ${colTasks.length}</span></h3>`;
 
       if(colTasks.length === 0){
         const empty = document.createElement('div');
@@ -2696,9 +2871,12 @@
       colTasks.forEach(task=>{
         const card = document.createElement('div');
         card.className = `card p-${task.priority}`;
+        card.dataset.id = task.id;
         const overdue = task.due && task.due < today && task.status !== 'done';
         card.innerHTML = `
+          <span class="drag-handle" title="Glisser vers une autre colonne" aria-hidden="true">⠿</span>
           <div class="title">${escapeHtml(task.title)}</div>
+          <span class="prio-tag prio-${task.priority}">${PRIORITY_LABELS[task.priority] || ''}</span>
           ${task.repeat === 'weekly' ? `<div style="margin-bottom:6px;">${repeatBadge(task)}</div>` : ''}
           <div class="meta">
             <div class="who">
@@ -2773,6 +2951,7 @@
     resetAssigneeChips('task-assignee-chips');
     await saveTasks();
     renderBoard(); renderHome();
+    toast('Tâche ajoutée');
   });
 
   // ---------- authentication ----------
@@ -2848,8 +3027,8 @@
       return;
     }
     let html = `
-      <div class="login-title">Connexion</div>
-      <div class="login-sub">Choisis qui tu es</div>
+      <div class="login-title">Qui es-tu ?</div>
+      <div class="login-sub">Choisis ton prénom</div>
       <div class="member-grid" id="login-member-grid"></div>
     `;
     body.innerHTML = html;
