@@ -12,6 +12,16 @@ service cloud.firestore {
     match /stock_items/{variantId} {
       allow read, write: if true;
     }
+    // Demandes de connexion : l'app en crée une (id au hasard, impossible à deviner),
+    // lit la réponse écrite par la fonction onLoginRequest, puis l'efface. Pas de liste possible.
+    match /login_requests/{id} {
+      allow get, delete: if true;
+      allow create: if id.size() >= 32
+        && request.resource.data.keys().hasOnly(['action', 'member', 'pin', 'create', 'oldPin', 'newPin', 'createdAt'])
+        && request.resource.data.action in ['status', 'login', 'changePin']
+        && (request.resource.data.action != 'changePin'
+            || (request.auth != null && request.resource.data.member == request.auth.token.member));
+    }
     // Jetons de notification : l'app enregistre le sien, sans pouvoir lire ni effacer ceux des autres.
     match /fcm_tokens/{token} {
       allow create, update: if request.resource.data.token == token
