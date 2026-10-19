@@ -21,7 +21,7 @@ Collection `app_data`, un document par clé, avec le champ `value` (chaîne JSON
 - `member-pins` : `{prénom: hash SHA-256 du code à 4 chiffres}` (sans sel).
 - `member-notes` : notes `{id, owner, title, content, updatedAt, pinned}`. `owner` vaut un prénom ou `__team__` (notes de toute l'équipe).
 - `note-print`, `note-blank` : anciennes notes de stock Print/Blank, **plus utilisées** depuis le nouveau stock (données laissées en place).
-- `shopify-orders` : écrit uniquement par la Cloud Function, `{syncedAt, orders:[{id, name, createdAt, url, items:[{title, variant, sku, qty, variantId, image}]}], error?, errorAt?}`. `qty` = quantité restant à expédier. Volontairement **aucune donnée client** (règles ouvertes).
+- `shopify-orders` : écrit uniquement par la Cloud Function, `{syncedAt, orders:[{id, name, createdAt, url, items:[{title, variant, sku, qty, variantId, image}]}], error?, errorAt?}`. `qty` = quantité restant à expédier ; `sku` = SKU **actuel** de la variante (celui de la ligne de commande, figé à l'achat, seulement si la variante n'existe plus). Volontairement **aucune donnée client** (règles ouvertes).
 - `shopify-products` : écrit uniquement par la Cloud Function, produits **actifs** de Shopify `{syncedAt, products:[{id, title, productType, image, variants:[{id, title, sku, image, options:[{name, value}]}]}], error?, errorAt?}`. `image` = miniature 160 px (`featuredMedia` pour le produit, premier `media` pour la variante), vide si aucune ; une ligne du Stock prend l'image de sa première variante qui en a une, sinon celle du produit. `title` de variante vide = produit sans options (« Default Title » chez Shopify).
 - `shopify-sync-request` : horodatage écrit par les boutons « Actualiser » (Commandes et Stock), déclenche une synchro.
 

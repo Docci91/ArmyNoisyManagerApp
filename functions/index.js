@@ -161,7 +161,7 @@ const ORDERS_QUERY = `
         lineItems(first: 100) {
           nodes {
             title variantTitle sku unfulfilledQuantity
-            variant { legacyResourceId }
+            variant { legacyResourceId sku }
             image { url(transform: { maxWidth: 160, maxHeight: 160 }) }
           }
         }
@@ -241,7 +241,8 @@ async function fetchOpenOrders(store, token){
       .map(li=>({
         title: li.title,
         variant: li.variantTitle || '',
-        sku: li.sku || '',
+        // SKU actuel de la variante : la commande garde celui du jour de l'achat.
+        sku: (li.variant && li.variant.sku) || li.sku || '',
         qty: li.unfulfilledQuantity,
         variantId: (li.variant && li.variant.legacyResourceId) || '',
         image: (li.image && li.image.url) || ''
