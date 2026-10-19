@@ -1902,7 +1902,7 @@
       ${orders.slice().sort((a,b)=> a.createdAt.localeCompare(b.createdAt)).map(o=>`
         <div class="order-card">
           <div class="order-card-head">
-            <a href="${escapeHtml(o.url)}" target="_blank" rel="noopener">${escapeHtml(o.name)}</a>
+            <a href="${escapeHtml(safeUrl(o.url))}" target="_blank" rel="noopener">${escapeHtml(o.name)}</a>
             <span class="order-card-date">${fmt(o.createdAt)}</span>
           </div>
           ${o.items.map(it=>`<div class="order-card-item"><strong>${it.qty} ×</strong> ${escapeHtml(it.title)}${it.variant ? ' — ' + escapeHtml(it.variant) : ''}</div>`).join('')}
@@ -2296,6 +2296,10 @@
   function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
   function initials(name){
     return name.replace(/["“”«»]/g, '').trim().split(/\s+/).map(w=>w[0]).slice(0,2).join('').toUpperCase();
+  }
+  // N'accepte que les liens https (pas de « javascript: »).
+  function safeUrl(url){
+    return /^https:\/\//i.test(String(url || '')) ? String(url) : '#';
   }
   function escapeHtml(str){
     return String(str).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -2761,7 +2765,7 @@
     members.forEach(m=>{
       const chip = document.createElement('div');
       chip.className = 'member-chip';
-      chip.innerHTML = `<span class="avatar">${initials(m)}</span>${escapeHtml(m)}`;
+      chip.innerHTML = `<span class="avatar">${escapeHtml(initials(m))}</span>${escapeHtml(m)}`;
       const del = document.createElement('button');
       del.className = 'icon-btn';
       del.textContent = '✕';
@@ -2830,6 +2834,9 @@
     }
     if(t.allTeam === undefined) t.allTeam = false;
     if(t.repeat === undefined) t.repeat = null;
+    // Valeurs reprises telles quelles dans le HTML (classes CSS) : on n'accepte que les valeurs connues.
+    if(!['low','med','high'].includes(t.priority)) t.priority = 'med';
+    if(!['todo','doing','done'].includes(t.status)) t.status = 'todo';
     return t;
   }
   function taskOccursOn(task, iso){
@@ -2863,7 +2870,7 @@
       assigneesEl.innerHTML = '<span style="font-style:italic; color:var(--ink-soft);">Non assignée</span>';
     } else {
       assigneesEl.innerHTML = task.assignees.map(a=>
-        `<span class="task-modal-assignee-item"><span class="avatar">${initials(a)}</span>${escapeHtml(a)}</span>`
+        `<span class="task-modal-assignee-item"><span class="avatar">${escapeHtml(initials(a))}</span>${escapeHtml(a)}</span>`
       ).join('');
     }
 
@@ -2920,9 +2927,9 @@
       return '<span style="font-style:italic;">non assignée</span>';
     }
     if(task.assignees.length === 1){
-      return `<span class="avatar">${initials(task.assignees[0])}</span><span>${escapeHtml(task.assignees[0])}</span>`;
+      return `<span class="avatar">${escapeHtml(initials(task.assignees[0]))}</span><span>${escapeHtml(task.assignees[0])}</span>`;
     }
-    const stack = task.assignees.slice(0,4).map(a=>`<span class="avatar" title="${escapeHtml(a)}">${initials(a)}</span>`).join('');
+    const stack = task.assignees.slice(0,4).map(a=>`<span class="avatar" title="${escapeHtml(a)}">${escapeHtml(initials(a))}</span>`).join('');
     const extra = task.assignees.length > 4 ? `<span style="margin-left:4px;">+${task.assignees.length-4}</span>` : '';
     return `<span class="avatar-stack">${stack}</span>${extra}`;
   }
@@ -3186,7 +3193,7 @@
     authMembers.forEach(m=>{
       const tile = document.createElement('button');
       tile.className = 'member-tile';
-      tile.innerHTML = `<span class="avatar">${initials(m)}</span><span>${escapeHtml(m)}</span>`;
+      tile.innerHTML = `<span class="avatar">${escapeHtml(initials(m))}</span><span>${escapeHtml(m)}</span>`;
       tile.addEventListener('click', ()=>{
         pendingMember = m;
         if(authPins[m]){

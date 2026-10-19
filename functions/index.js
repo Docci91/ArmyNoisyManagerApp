@@ -57,6 +57,9 @@ function deleteTokens(invalidTokens){
   return Promise.all([...invalidTokens].map(t=>db.collection('fcm_tokens').doc(t).delete()));
 }
 
+const MAX_NEW_TASK_PUSHES = 5;
+const clip = (s, n) => { s = String(s || ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
+
 const assigneesOf = (task, members) => task.allTeam ? members : (task.assignees || []);
 const whoLabel = task => task.allTeam ? "Toute l'équipe" : (task.assignees || []).join(', ');
 
@@ -66,7 +69,9 @@ exports.notifyNewTasks = functions.firestore
     const before = parseTasks(change.before);
     const after = parseTasks(change.after);
     const knownIds = new Set(before.map(t=>t.id));
-    const newTasks = after.filter(t=>!knownIds.has(t.id));
+    // Plafond : une écriture anormale (ou malveillante, les règles étant ouvertes)
+    // ne doit pas inonder l'équipe de notifications.
+    const newTasks = after.filter(t=>!knownIds.has(t.id)).slice(0, MAX_NEW_TASK_PUSHES);
     if(newTasks.length === 0) return;
 
     const {members, tokensByMember} = await loadMembersAndTokens();
@@ -76,7 +81,7 @@ exports.notifyNewTasks = functions.firestore
         .filter(name=>name !== task.createdBy); // pas de push à l'auteur de la tâche
       await notifyMembers(recipients, tokensByMember, {
         title: 'Nouvelle tâche — ARMY NOÏSY',
-        body: `${task.title} — assignée à ${whoLabel(task)}`,
+        body: clip(`${task.title} — assignée à ${whoLabel(task)}`, 200),
         tag: String(task.id)
       }, invalidTokens);
     }
@@ -121,7 +126,7 @@ exports.remindTasks = functions.pubsub
       if(!when) continue;
       await notifyMembers(assigneesOf(task, members), tokensByMember, {
         title: `Rappel : à faire ${when} — ARMY NOÏSY`,
-        body: `${task.title} — ${whoLabel(task)}`,
+        body: clip(`${task.title} — ${whoLabel(task)}`, 200),
         tag: `rappel-${task.id}-${when === 'demain' ? tomorrow : today}`
       }, invalidTokens);
     }
@@ -498,7 +503,28 @@ exports.syncShopifyScheduled = functions
   .onRun(()=>syncShopify());
 
 // Boutons « Actualiser » des écrans Commandes et Stock : l'app écrit app_data/shopify-sync-request.
+// Au plus une synchro par minute : n'importe qui peut écrire ce document (règles ouvertes),
+// on évite qu'une rafale d'écritures multiplie les appels à Shopify et la facture.
+const SYNC_REQUEST_MIN_GAP_MS = 60 * 1000;
+
+async function claimSyncSlot(){
+  const ref = db.collection('server_state').doc('sync-request');
+  return db.runTransaction(async tx=>{
+    const snap = await tx.get(ref);
+    const last = snap.exists ? snap.data().lastRunAt || 0 : 0;
+    if(Date.now() - last < SYNC_REQUEST_MIN_GAP_MS) return false;
+    tx.set(ref, { lastRunAt: Date.now() });
+    return true;
+  });
+}
+
 exports.syncShopifyOnRequest = functions
   .runWith({ secrets: SHOPIFY_SECRETS })
   .firestore.document('app_data/shopify-sync-request')
-  .onWrite(()=>syncShopify());
+  .onWrite(async ()=>{
+    if(!(await claimSyncSlot())){
+      console.log('sync-request ignorée : dernière synchro il y a moins d\'une minute');
+      return;
+    }
+    await syncShopify();
+  });

@@ -1,16 +1,21 @@
 rules_version = '2';
-// Règles ouvertes : outil interne, pas de Firebase Authentication.
-// Tout le monde qui connaît l'URL peut lire et écrire ces collections.
+// Pas de Firebase Authentication : l'app est accessible à qui connaît l'URL.
+// On limite au moins ce que l'app n'a pas besoin de faire.
+// Les Cloud Functions (SDK Admin) ne sont pas concernées par ces règles.
 service cloud.firestore {
   match /databases/{database}/documents {
     match /app_data/{key} {
-      allow read, write: if true;
+      allow read: if true;
+      // Copies de Shopify : écrites uniquement par la Cloud Function.
+      allow write: if !(key in ['shopify-orders', 'shopify-products']);
     }
     match /stock_items/{variantId} {
       allow read, write: if true;
     }
+    // Jetons de notification : l'app enregistre le sien, sans pouvoir lire ni effacer ceux des autres.
     match /fcm_tokens/{token} {
-      allow read, write: if true;
+      allow create, update: if request.resource.data.token == token
+        && request.resource.data.member is string;
     }
   }
 }
