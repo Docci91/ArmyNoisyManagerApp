@@ -7,10 +7,10 @@ Outil interne pour la marque de vêtements ARMY NOÏSY (équipe de 2 à 5 person
 - **Une seule page** : `index.html` contient tout (HTML, CSS, JS). Pas de build, pas de framework.
 - **Assets embarqués en base64** dans `index.html` : favicon, apple-touch-icon et manifest PWA (lignes 7 à 9), texture camouflage `--camo` (ligne 31), logo (ligne 1016). Ces lignes font de 10 Ko à 270 Ko : ne jamais ouvrir le fichier en entier, utiliser `grep -n` et `sed -n 'A,Bp' | cut -c1-200`.
 - **Autres fichiers à la racine** : `firebase-messaging-sw.js` (service worker FCM, doit rester à la racine) et `icon-192.png` (icône des notifications push, utilisée par le service worker).
-- **Firebase** : `functions/` (Cloud Functions `notifyNewTasks`, `remindTasks`, `syncShopifyScheduled`, `syncShopifyOnRequest`), `firebase.json`, `.firebaserc` (projet par défaut) et `firestore.rules`. Ces fichiers ne servent pas au site, seulement à `firebase deploy`.
+- **Firebase** : `functions/` (Cloud Functions `notifyNewTasks`, `remindTasks`, `syncShopifyScheduled`, `syncShopifyOnRequest`, `onLoginRequest`, `onMembersChange`), `firebase.json`, `.firebaserc` (projet par défaut) et `firestore.rules`. Ces fichiers ne servent pas au site, seulement à `firebase deploy`.
 - **Hébergement** : GitHub Pages, branche `main`, racine. URL : https://docci91.github.io/ArmyNoisyManagerApp/
 - **Base de données** : Firebase Firestore, projet `armynoisymanagerapp` (config dans `index.html` et `firebase-messaging-sw.js`).
-- Trois blocs `<script>` en fin de page : SDK Firebase 10.12.0 (compat : app, firestore, messaging), puis la config Firebase + `VAPID_KEY` + `db`/`messaging` globaux, puis tout le code applicatif dans une IIFE (dernier bloc).
+- Trois blocs `<script>` en fin de page : SDK Firebase 10.12.0 (compat : app, auth, firestore, messaging), puis la config Firebase + `VAPID_KEY` + `db`/`auth`/`messaging` globaux, puis tout le code applicatif dans une IIFE (dernier bloc).
 - Accès aux données via `dbGet(key)` / `dbSet(key, value)` ; `saveTasks()`, `saveMembers()`, `saveMemberNotes()` sauvegardent toute la liste d'un coup (pas de mise à jour partielle).
 
 ## Données Firestore
@@ -18,7 +18,7 @@ Outil interne pour la marque de vêtements ARMY NOÏSY (équipe de 2 à 5 person
 Collection `app_data`, un document par clé, avec le champ `value` (chaîne JSON) et `updatedAt` :
 - `tasks` : liste de tâches `{id, title, assignees[], allTeam, priority, due, status, repeat, createdBy}`. `priority` vaut `low`, `med` ou `high` ; `due` est une date `AAAA-MM-JJ` (ou vide) ; `repeat` vaut `'weekly'` ou `null` ; `status` vaut `todo`, `doing` ou `done`. `createdBy` est le prénom de l'auteur (absent sur les anciennes tâches). `normalizeTask()` convertit les anciennes tâches (champ `assignee` unique).
 - `members` : liste de prénoms.
-- `member-pins` : `{prénom: hash SHA-256 du code à 4 chiffres}` (sans sel).
+- `member-pins` : **ancien** stockage des codes (`{prénom: SHA-256}` sans sel, qui était lisible par tous). Recopié dans `auth_pins` par la fonction au premier appel, inaccessible depuis l'app, supprimé par la fonction 24 h après la migration.
 - `member-notes` : notes `{id, owner, title, content, updatedAt, pinned}`. `owner` vaut un prénom ou `__team__` (notes de toute l'équipe).
 - `note-print`, `note-blank` : anciennes notes de stock Print/Blank, **plus utilisées** depuis le nouveau stock (données laissées en place).
 - `shopify-orders` : écrit uniquement par la Cloud Function, `{syncedAt, orders:[{id, name, createdAt, url, items:[{title, variant, sku, qty, variantId, image}]}], error?, errorAt?}`. `qty` = quantité restant à expédier ; `sku` = SKU **actuel** de la variante (celui de la ligne de commande, figé à l'achat, seulement si la variante n'existe plus). Volontairement **aucune donnée client** (règles ouvertes).
@@ -29,16 +29,22 @@ Collection `stock_items` : quantités de stock **saisies à la main**, un docume
 
 Collection `shopify_auto_sku` : écrite uniquement par la Cloud Function (variantes déjà traitées par les SKU automatiques), non accessible depuis l'app.
 
-Collection `fcm_tokens` : un document par appareil, d'identifiant le jeton lui-même, `{member, token, updatedAt}`.
+Collection `fcm_tokens` : un document par appareil, d'identifiant le jeton lui-même, `{member, token, updatedAt}`. Un appareil ne peut enregistrer un jeton qu'à son propre prénom, et le supprime à la déconnexion.
 
-La session (qui est connecté) est dans `localStorage` (`current-user`), propre à chaque appareil.
+Collection `auth_pins` (fonctions seulement) : un document par membre (id = `encodeURIComponent(prénom)`), `{salt, hash}` (scrypt) ou `{legacySha256}` (ancien code, à changer), plus `fails` et `lockedUntil` (blocage). Pour débloquer ou réinitialiser le code d'un membre : supprimer son document dans la console Firestore, il recréera un code à sa prochaine connexion.
+
+Collection `login_requests` : demandes de connexion de passage (voir Connexion ci-dessous), effacées après lecture.
+
+Collection `server_state` (fonctions seulement) : `sync-request` (dernière synchro à la demande) et `pins-migration`.
+
+La session est une session **Firebase Authentication** (jeton personnalisé créé par la fonction `onLoginRequest`, claim `member` = prénom), gardée par le SDK sur chaque appareil. L'ancienne clé `localStorage` `current-user` est effacée au chargement.
 
 Sont écoutés en temps réel : `tasks`, `shopify-orders`, `shopify-products` et la collection `stock_items` ; les autres clés sont lues une fois au chargement (`loadAll()`), il faut recharger la page pour voir les modifs des autres.
 
 ## Fonctionnalités
 
 - Écran de connexion : carte vitrée sur le camouflage, grand logo, « ESPACE ÉQUIPE », titre « TOM QUI ? » (choisi par Dorian), grosses tuiles de prénoms.
-- Connexion par choix du prénom + code à 4 chiffres (un membre sans code le crée à sa première connexion, saisi deux fois). **Plus de création de profil** (retirée le 18/10/2026 à la demande de Dorian : ni « Nouveau profil » à la connexion, ni « Ajouter un membre » dans Équipe). Seul reste `renderLoginCreateFirst`, affiché si la liste des membres est vide.
+- Connexion par choix du prénom + code à 4 chiffres (un membre sans code le crée à sa première connexion, saisi deux fois). **Le code est vérifié par la Cloud Function** `onLoginRequest`, plus dans le navigateur. L'organisation Google Workspace `armynoisy.com` (dont fait partie le projet) interdit de rendre une fonction publique (`allUsers`, règle « partage limité au domaine », que Dorian ne peut pas lever) : pas de fonctions appelables. `serverCall(action, data)` crée donc `login_requests/{id au hasard de 32 caractères}` (`action` = `status` → prénoms et qui a un code, `login` → jeton, `changePin`), la fonction remplace le document par `{ok, result | error, doneAt}` (le code saisi disparaît), l'app lit la réponse puis efface le document ; la fonction efface aussi les réponses de plus de 10 min. Compter 1 à 5 s par demande (démarrage à froid). Blocage : 5 erreurs → blocage 15 min, puis 30 min, 1 h… (24 h max), avec une notification au membre. Après connexion avec un ancien code (`legacySha256`), un nouveau code est imposé. « Changer mon code » dans Équipe (action `changePin`, les règles vérifient que `member` est bien le membre connecté). Retirer un membre ferme ses sessions (`onMembersChange` : `revokeRefreshTokens`, effet sous 1 h) et supprime ses jetons de notification. **Plus de création de profil** (retirée le 18/10/2026 à la demande de Dorian : ni « Nouveau profil » à la connexion, ni « Ajouter un membre » dans Équipe). Seul reste `renderLoginCreateFirst`, affiché si la liste des membres est vide.
 - 6 écrans : `home`, `tasks`, `orders`, `stock`, `team`, `notes`, navigation par `goto(screen)` et attributs `data-goto`.
 - Accueil : « Salut <prénom> 👋 » + date, 4 tuiles cliquables en haut (`renderDash` : commandes à envoyer, articles déjà en stock, en retard ⏰, tâches du jour), calendrier mensuel, notes épinglées, prochaines tâches chronologiques, panneau du jour (ajout de tâche au clic sur un jour).
 - Tâches : kanban 3 colonnes (titres « À FAIRE · N », étiquette de priorité, glisser-déposer via la poignée ⠿ : `setupBoardDrag`, pointeurs souris/doigt, défilement auto sur mobile), assignation multiple ou « Toute l'équipe », répétition hebdomadaire, fenêtre de détail au clic.
@@ -46,7 +52,7 @@ Sont écoutés en temps réel : `tasks`, `shopify-orders`, `shopify-products` et
 - Photos : un tap sur une miniature (Stock, Commandes) ouvre `#lightbox` (URL Shopify `_160x160` → `_800x800`).
 - Retours : le chiffre du stock rebondit (`stockFeedback`, `.bump`), vibration Android, toasts « Stock mis à jour » / « Tâche ajoutée » / « Tâche déplacée ».
 - Stock (`#screen-stock`) : une ligne par produit et par couleur (image, nom, couleur, SKU commun sans la taille, total), avec toutes les tailles côte à côte (+/− ou saisie). La taille = option nommée Taille/Size, sinon la dernière option ; les autres options (couleur) regroupent les lignes (`splitVariant`, `baseSku`). Section « Accessoires » tout en haut (tout ce qui n'est ni hoodie, ni veste, ni t-shirt/polo, ni pants), puis classement par nom de modèle (texte entre guillemets du titre, ex. `"PEARL" DICKIES JACKET` → PEARL ; sinon titre sans les mots de type, ex. « Hoodie Grillz » → Grillz ; un intertitre par modèle), puis Hoodie → Veste → T-shirt (polo inclus) → Pants (`articleType` : « Type de produit » Shopify, sinon mots du titre ; `articleName`). Ajouter un mot à `ARTICLE_TYPES` / `ACCESSORY_WORDS` si un article est mal classé. Une ligne avec du stock (> 0) a un contour vert (`.has-stock`, pointillé si retirée). Chaque ligne se replie/déplie au clic sur son nom ou son image (`stockFold`, choix gardé jusqu'au rechargement) ; par défaut, repliée si 0 en stock. Une ligne modifiée reste ouverte, et la recherche déplie tout. Une variante qui n'est plus active sur Shopify mais avec du stock > 0 reste affichée avec le badge « Plus en vente » ; à 0, elle disparaît. Recherche par produit, taille ou SKU. Avant la première synchro Shopify, la liste est vide.
-- Équipe : qui est connecté, déconnexion, activation des notifications, liste et suppression de membres.
+- Équipe : qui est connecté, « Changer mon code », déconnexion, activation des notifications, liste et suppression de membres.
 - Notes : un onglet par membre plus un onglet « Toute l'équipe », plusieurs notes par onglet, épinglage vers l'accueil.
 - Notifications : écoute temps réel de `tasks` (`watchTasks`) + notifications navigateur ; push FCM même app fermée via `firebase-messaging-sw.js` et la Cloud Function. Rappel push la veille et le jour de l'échéance (9 h).
 - Mise en page mobile (barre en bas : icônes seules, libellé sous l'onglet actif, pastille du nombre de commandes `#nav-orders-badge`) et bureau ≥ 900px (barre latérale fixe à gauche, accueil et notes sur deux colonnes).
@@ -64,7 +70,7 @@ Fonctionnement : à chaque écriture de `app_data/tasks`, elle compare avant/apr
 
 Rappels : `remindTasks` tourne chaque jour à 9 h (Europe/Paris) et notifie les assignés (tous les `members` si `allTeam`, auteur compris) des tâches non terminées dont l'échéance est demain ou aujourd'hui, tâches hebdomadaires comprises (même règle que `taskOccursOn`).
 
-**Déploiement automatique** : `.github/workflows/deploy-firebase.yml` redéploie fonctions + règles à chaque push sur `main` qui touche `functions/`, `firestore.rules` ou `firebase.json` (et à la demande via « Run workflow » dans l'onglet Actions). Il utilise le secret GitHub `FIREBASE_TOKEN` (créé par Dorian avec `firebase login:ci`). En cas d'échec, lire le journal du job dans l'onglet Actions.
+**Déploiement automatique** : `.github/workflows/deploy-firebase.yml` redéploie fonctions + règles à chaque push sur `main` qui touche `functions/`, `firestore.rules` ou `firebase.json` (et à la demande via « Run workflow » dans l'onglet Actions). Il se connecte **sans clé ni secret** par Workload Identity Federation (pool `github`, fournisseur `github-repo`, limité au dépôt `Docci91/ArmyNoisyManagerApp` et à la branche `main` ; la création de clés de compte de service est interdite par une règle d'organisation Google) et agit comme le compte de service `github-deploy@armynoisymanagerapp.iam.gserviceaccount.com` (rôles sur le projet : Administrateur Firebase, Administrateur Cloud Functions, Utilisateur du compte de service, Lecteur de clés API, Lecteur Secret Manager, Administrateur Cloud Scheduler). L'ancien `FIREBASE_TOKEN` (`firebase login:ci`, accès à tout le compte Google) a expiré le 19/10/2026 et n'est plus utilisé : les déploiements des PR #26 et #31 avaient échoué pour cette raison. En cas d'échec, lire le journal du job dans l'onglet Actions ; un rôle manquant apparaît comme « Permission … denied » avec le nom de la permission.
 
 **Redéployer à la main (secours)** (depuis le PC de Dorian, Windows/PowerShell, ou Cloud Shell) : télécharger le dépôt, `cd functions && npm install && cd ..`, puis `firebase deploy --only functions,firestore:rules`. Si « Authentication Error » : `firebase login --reauth`. `firebase.json` n'a volontairement pas d'étape `predeploy`.
 
@@ -103,8 +109,10 @@ Notifications push vérifiées en production le 18/10/2026 (app fermée sur iPho
 - Deux listes de membres coexistent : `members` (données de l'app) et `authMembers` (écran de connexion), toutes deux issues de la clé `members`. Les garder synchronisées si on touche à l'une.
 - Supprimer un membre (✕ dans Équipe, sans confirmation) le retire seulement de `members` : son code dans `member-pins`, ses notes et ses assignations de tâches restent.
 - `searchTerm` est un reste de l'ancienne barre de recherche (supprimée) : toujours vide, le filtre de `renderBoard` ne fait rien.
-- Les jetons FCM ne sont jamais supprimés (ni à la déconnexion, ni s'ils expirent) : la Cloud Function devra ignorer ou nettoyer les jetons invalides.
-- Sécurité faible par conception : règles Firestore ouvertes et code à 4 chiffres, suffisant pour un outil interne, pas pour des données sensibles. Si Dorian veut durcir, passer à Firebase Authentication.
+- Les jetons FCM sont supprimés à la déconnexion, quand un membre est retiré, et par les fonctions quand FCM les dit invalides.
+- **Sécurité** (revue du 19/10/2026) : `firestore.rules` n'ouvre les données qu'aux membres connectés (`request.auth.token.member`) ; `shopify-orders`/`shopify-products` en lecture seule (écrits par la fonction) ; `member-pins`, `auth_pins`, `server_state`, `shopify_auto_sku` inaccessibles ; `login_requests` : création contrôlée, lecture et suppression par id seulement, pas de liste. Un membre connecté peut toujours tout lire et modifier (pas de rôles). `notifyNewTasks` envoie au plus 5 notifications par écriture ; `syncShopifyOnRequest` au plus une synchro par minute. Tout texte venant de Firestore passe par `escapeHtml` avant `innerHTML`, les liens par `safeUrl`, et `normalizeTask` n'accepte que les priorités/statuts connus. Garder ces habitudes.
+- `onLoginRequest` utilise `createCustomToken` : le compte `armynoisymanagerapp@appspot.gserviceaccount.com` a besoin du rôle « Créateur de jetons du compte de service » et de l'API IAM Service Account Credentials (sinon « Erreur du serveur » à la connexion et « signBlob » dans `firebase functions:log --only onLoginRequest`). Authentication doit être activé dans la console.
+- Tester la connexion en local : émulateurs `functions,firestore,auth` (`firebase emulators:exec`), avec un projet `demo-…`.
 
 ## Déploiement
 

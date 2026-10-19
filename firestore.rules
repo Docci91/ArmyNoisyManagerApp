@@ -1,31 +1,38 @@
 rules_version = '2';
-// Pas de Firebase Authentication : l'app est accessible à qui connaît l'URL.
-// On limite au moins ce que l'app n'a pas besoin de faire.
+// Données réservées aux membres connectés : la Cloud Function `onLoginRequest` vérifie le code
+// à 4 chiffres et donne un jeton Firebase Authentication avec le prénom (claim `member`).
 // Les Cloud Functions (SDK Admin) ne sont pas concernées par ces règles.
+// Non listées, donc inaccessibles depuis l'app : auth_pins, server_state, shopify_auto_sku.
 service cloud.firestore {
   match /databases/{database}/documents {
+    function isMember(){
+      return request.auth != null && request.auth.token.member is string;
+    }
     match /app_data/{key} {
-      allow read: if true;
+      // member-pins : anciens codes, en attente de suppression par la fonction.
+      allow read: if isMember() && key != 'member-pins';
       // Copies de Shopify : écrites uniquement par la Cloud Function.
-      allow write: if !(key in ['shopify-orders', 'shopify-products']);
+      allow write: if isMember() && !(key in ['shopify-orders', 'shopify-products', 'member-pins']);
     }
     match /stock_items/{variantId} {
-      allow read, write: if true;
+      allow read, write: if isMember();
     }
     // Demandes de connexion : l'app en crée une (id au hasard, impossible à deviner),
-    // lit la réponse écrite par la fonction onLoginRequest, puis l'efface. Pas de liste possible.
+    // lit la réponse écrite par la fonction, puis l'efface. Pas de liste possible.
     match /login_requests/{id} {
       allow get, delete: if true;
       allow create: if id.size() >= 32
         && request.resource.data.keys().hasOnly(['action', 'member', 'pin', 'create', 'oldPin', 'newPin', 'createdAt'])
         && request.resource.data.action in ['status', 'login', 'changePin']
         && (request.resource.data.action != 'changePin'
-            || (request.auth != null && request.resource.data.member == request.auth.token.member));
+            || (isMember() && request.resource.data.member == request.auth.token.member));
     }
-    // Jetons de notification : l'app enregistre le sien, sans pouvoir lire ni effacer ceux des autres.
+    // Jetons de notification : chacun enregistre le sien à son prénom, sans voir ceux des autres.
     match /fcm_tokens/{token} {
-      allow create, update: if request.resource.data.token == token
-        && request.resource.data.member is string;
+      allow create, update: if isMember()
+        && request.resource.data.token == token
+        && request.resource.data.member == request.auth.token.member;
+      allow delete: if isMember() && resource.data.member == request.auth.token.member;
     }
   }
 }
