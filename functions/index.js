@@ -140,7 +140,7 @@ exports.remindTasks = functions.pubsub
 //   SHOPIFY_STORE          ex. army-noisy.myshopify.com
 //   SHOPIFY_CLIENT_ID      identifiant client de l'app (Dev Dashboard Shopify)
 //   SHOPIFY_CLIENT_SECRET  secret client de l'app
-// Scopes de l'app : read_orders, read_products.
+// Scopes de l'app : read_orders, read_products, write_products (SKU et poids automatiques).
 
 const SHOPIFY_SECRETS = ['SHOPIFY_STORE', 'SHOPIFY_CLIENT_ID', 'SHOPIFY_CLIENT_SECRET'];
 const SHOPIFY_API_VERSION = '2026-07';
@@ -203,19 +203,23 @@ async function shopifyToken(store){
   return (await res.json()).access_token;
 }
 
+async function shopifyGraphql(store, token, query, variables){
+  const res = await fetch(`https://${store}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
+    body: JSON.stringify({ query, variables })
+  });
+  const body = await res.json();
+  if(!res.ok || body.errors) throw new Error(`Erreur Shopify : ${JSON.stringify(body.errors || res.status)}`);
+  return body.data;
+}
+
 // Parcourt toutes les pages d'une requête GraphQL dont la racine est `field`.
 async function shopifyQueryAll(store, token, query, field){
   const nodes = [];
   let cursor = null;
   for(let page = 0; page < 20; page++){
-    const res = await fetch(`https://${store}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
-      body: JSON.stringify({ query, variables: { cursor } })
-    });
-    const body = await res.json();
-    if(!res.ok || body.errors) throw new Error(`Erreur Shopify : ${JSON.stringify(body.errors || res.status)}`);
-    const conn = body.data[field];
+    const conn = (await shopifyGraphql(store, token, query, { cursor }))[field];
     nodes.push(...conn.nodes);
     if(!conn.pageInfo.hasNextPage) break;
     cursor = conn.pageInfo.endCursor;
@@ -290,10 +294,200 @@ async function writeSynced(key, build){
   });
 }
 
+// ---------- SKU et poids automatiques des nouveaux produits ----------
+// À chaque synchro, les variantes des produits créés depuis AUTO_SKU_SINCE
+// reçoivent un SKU au format de la boutique, TYPE-NOM-COULEUR-TAILLE
+// (ex. TEE-PEARL-BLK-S ; sans couleur si le produit n'a pas d'option couleur,
+// TU si pas de taille), et le poids habituel de leur type d'article.
+// Chaque variante n'est traitée qu'une fois (collection shopify_auto_sku) :
+// une correction faite ensuite à la main dans Shopify n'est pas écrasée.
+// Les produits plus anciens ne sont jamais modifiés.
+// Les codes type/couleur et les poids sont appris des produits actifs existants ;
+// les tables ci-dessous servent quand la boutique n'a encore aucun exemple.
+
+const AUTO_SKU_SINCE = '2026-10-19T00:00:00Z';
+// Laisse le temps de finir la saisie du produit avant d'y toucher.
+const AUTO_SKU_DELAY_MS = 5 * 60 * 1000;
+
+const TYPE_CODES = [
+  [/hoodie\s*zip|zipp|\bzip\b/, 'ZIP'],
+  [/hoodie|capuche/, 'HOO'],
+  [/sweat|crewneck/, 'SWT'],
+  [/long\s*sleeve|longsleeve|manches?\s*longues?/, 'LGS'],
+  [/polo/, 'POL'],
+  [/jersey|maillot/, 'JRS'],
+  [/t-?shirt|\btee\b/, 'TEE'],
+  [/veste|jacket/, 'JKT'],
+  [/jogg/, 'JOG'],
+  [/short/, 'SHO'],
+  [/pant|pantalon/, 'PNT'],
+  [/bonnet|beanie/, 'BNE'],
+  [/casquette|\bcap\b/, 'CAP']
+];
+
+// Poids en kg, relevés sur la boutique le 19/10/2026.
+const DEFAULT_WEIGHTS = {
+  TEE: 0.149, POL: 0.149, JRS: 0.149, LGS: 0.199, SHO: 0.249, JOG: 0.349, PNT: 0.349,
+  SWT: 0.449, HOO: 0.449, ZIP: 0.449, JKT: 0.559, BNE: 0.1, CAP: 0.1
+};
+
+const COLOR_CODES = {
+  NOIR: 'BLK', BLACK: 'BLK', BLANC: 'WHT', WHITE: 'WHT', ROUGE: 'RED', RED: 'RED',
+  GRIS: 'GRY', GREY: 'GRY', GRAY: 'GRY', BLEU: 'BLU', BLUE: 'BLU', BEIGE: 'BEI',
+  VIOLET: 'PRP', PURPLE: 'PRP', JAUNE: 'YLW', YELLOW: 'YLW', VERT: 'GRN', GREEN: 'GRN',
+  ROSE: 'PNK', PINK: 'PNK', ORANGE: 'ORG', MARRON: 'BRN', BROWN: 'BRN', KAKI: 'KHK',
+  KHAKI: 'KHK', CAMO: 'CAM', FLAMMES: 'FLM', 'NOIR & BLANC': 'KWH'
+};
+
+const AUTO_PRODUCTS_QUERY = `
+  query($cursor: String) {
+    products(first: 50, after: $cursor, query: "status:active OR status:draft") {
+      nodes {
+        id legacyResourceId title productType createdAt
+        variants(first: 100) {
+          nodes {
+            id legacyResourceId sku selectedOptions { name value }
+            inventoryItem { measurement { weight { value unit } } }
+          }
+        }
+      }
+      pageInfo { hasNextPage endCursor }
+    }
+  }`;
+
+const VARIANTS_UPDATE = `
+  mutation($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+    productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+      userErrors { field message }
+    }
+  }`;
+
+const plain = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().trim();
+const isColorOption = name => /COULEUR|COLOU?R/.test(plain(name));
+const isSizeOption = name => /TAILLE|SIZE/.test(plain(name));
+
+function weightKg(v){
+  const w = v.inventoryItem && v.inventoryItem.measurement && v.inventoryItem.measurement.weight;
+  if(!w || !w.value) return 0;
+  const factor = { KILOGRAMS: 1, GRAMS: 0.001, POUNDS: 0.45359237, OUNCES: 0.028349523 }[w.unit] || 1;
+  return Math.round(w.value * factor * 1000) / 1000;
+}
+
+function mostCommon(values){
+  const counts = {};
+  values.forEach(v=>{ counts[v] = (counts[v] || 0) + 1; });
+  return Object.keys(counts).sort((a, b)=>counts[b] - counts[a])[0];
+}
+
+// Ce que les produits existants enseignent : code par type de produit,
+// code par couleur et poids par code de type.
+function learnNorms(products){
+  const typeSeen = {}, colorSeen = {}, weightSeen = {};
+  products.forEach(p=>{
+    p.variants.nodes.forEach(v=>{
+      const parts = (v.sku || '').split('-');
+      if(parts.length < 3 || !/^[A-Z]{3}$/.test(parts[0])) return;
+      const type = parts[0];
+      if(p.productType) (typeSeen[plain(p.productType)] = typeSeen[plain(p.productType)] || []).push(type);
+      const color = v.selectedOptions.find(o=>isColorOption(o.name));
+      if(color && parts.length >= 4) (colorSeen[plain(color.value)] = colorSeen[plain(color.value)] || []).push(parts[2]);
+      const w = weightKg(v);
+      if(w > 0) (weightSeen[type] = weightSeen[type] || []).push(w);
+    });
+  });
+  const pick = seen => Object.fromEntries(Object.entries(seen).map(([k, list])=>[k, mostCommon(list)]));
+  const weights = pick(weightSeen);
+  Object.keys(weights).forEach(k=>{ weights[k] = Number(weights[k]); });
+  return { types: pick(typeSeen), colors: pick(colorSeen), weights };
+}
+
+function typeCode(product, norms){
+  const learned = norms.types[plain(product.productType)];
+  if(learned) return learned;
+  const text = `${product.productType} ${product.title}`.toLowerCase();
+  const rule = TYPE_CODES.find(([re])=>re.test(text));
+  return rule ? rule[1] : '';
+}
+
+// Nom du modèle : premier mot du texte entre guillemets, 6 lettres max
+// ("PEARL" TEE → PEARL, "CHOPPERS" BEANIE → CHOPPE, "NY LOGO" → NY).
+function modelCode(title){
+  const quoted = String(title).match(/["“”«»]\s*([^"“”«»]+?)\s*["“”«»]/);
+  let text = quoted ? quoted[1] : String(title);
+  if(!quoted) TYPE_CODES.forEach(([re])=>{ text = text.toLowerCase().replace(new RegExp(re.source, 'g'), ' '); });
+  const word = plain(text).split(/[^A-Z0-9]+/).filter(Boolean)[0] || '';
+  return word.slice(0, 6);
+}
+
+function colorCode(value, norms){
+  const key = plain(value);
+  return norms.colors[key] || COLOR_CODES[key] || key.replace(/[^A-Z]/g, '').slice(0, 3);
+}
+
+function sizeCode(variant){
+  const size = variant.selectedOptions.find(o=>isSizeOption(o.name));
+  return size ? plain(size.value).replace(/\s+/g, '') : 'TU';
+}
+
+async function autoSkuNewProducts(store, token){
+  const products = await shopifyQueryAll(store, token, AUTO_PRODUCTS_QUERY, 'products');
+  const now = Date.now();
+  const isNew = p => p.createdAt >= AUTO_SKU_SINCE;
+  const ready = products.filter(p=>isNew(p) && now - Date.parse(p.createdAt) > AUTO_SKU_DELAY_MS);
+  if(!ready.length) return;
+
+  const norms = learnNorms(products.filter(p=>!isNew(p)));
+  // SKU déjà pris par d'autres produits, pour ne pas créer de doublon de modèle.
+  const prefixOwner = {};
+  products.filter(p=>!isNew(p)).forEach(p=>p.variants.nodes.forEach(v=>{
+    const parts = (v.sku || '').split('-');
+    if(parts.length >= 3) prefixOwner[`${parts[0]}-${parts[1]}`] = prefixOwner[`${parts[0]}-${parts[1]}`] || p.id;
+  }));
+
+  for(const p of ready){
+    const ref = db.collection('shopify_auto_sku').doc(p.legacyResourceId);
+    const snap = await ref.get();
+    const done = snap.exists ? (snap.data().variants || {}) : {};
+    const todo = p.variants.nodes.filter(v=>!done[v.legacyResourceId]);
+    if(!todo.length) continue;
+
+    const type = typeCode(p, norms);
+    let model = modelCode(p.title);
+    if(!type || !model){
+      await ref.set({ title: p.title, skipped: 'Type ou nom introuvable', checkedAt: new Date().toISOString() }, { merge: true });
+      continue;
+    }
+    // Deux produits différents du même type avec le même nom : on numérote (ex. TEE-KITTY2).
+    for(let n = 2; prefixOwner[`${type}-${model}`] && prefixOwner[`${type}-${model}`] !== p.id && n < 10; n++){
+      model = `${modelCode(p.title).slice(0, 5)}${n}`;
+    }
+    prefixOwner[`${type}-${model}`] = p.id;
+
+    const weight = norms.weights[type] || DEFAULT_WEIGHTS[type] || 0;
+    const changes = {};
+    const variants = todo.map(v=>{
+      const color = v.selectedOptions.find(o=>isColorOption(o.name));
+      const sku = [type, model, color ? colorCode(color.value, norms) : '', sizeCode(v)].filter(Boolean).join('-');
+      changes[v.legacyResourceId] = { oldSku: v.sku || '', sku, oldWeight: weightKg(v), weight: weight || weightKg(v), at: new Date().toISOString() };
+      const measurement = weight ? { weight: { value: weight, unit: 'KILOGRAMS' } } : undefined;
+      return { id: v.id, inventoryItem: { sku, ...(measurement ? { measurement } : {}) } };
+    });
+
+    const res = await shopifyGraphql(store, token, VARIANTS_UPDATE, { productId: p.id, variants });
+    const errors = res.productVariantsBulkUpdate.userErrors;
+    if(errors.length) throw new Error(`SKU automatiques « ${p.title} » : ${JSON.stringify(errors)}`);
+    await ref.set({ title: p.title, variants: changes, skipped: admin.firestore.FieldValue.delete() }, { merge: true });
+    console.log('auto-sku', p.title, Object.values(changes).map(c=>c.sku).join(' '));
+  }
+}
+
 async function syncShopify(){
   const store = shopifyStore();
   const tokenPromise = shopifyToken(store);
   await writeSynced('shopify-orders', async ()=>({ orders: await fetchOpenOrders(store, await tokenPromise) }));
+  // Avant la liste des produits, pour qu'elle contienne déjà les nouveaux SKU.
+  try{ await autoSkuNewProducts(store, await tokenPromise); }
+  catch(e){ console.error('auto-sku', e); }
   await writeSynced('shopify-products', async ()=>({ products: await fetchActiveProducts(store, await tokenPromise) }));
 }
 

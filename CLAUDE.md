@@ -27,6 +27,8 @@ Collection `app_data`, un document par clé, avec le champ `value` (chaîne JSON
 
 Collection `stock_items` : quantités de stock **saisies à la main**, un document par variante (id = id de variante Shopify) `{qty, productId, productTitle, variantTitle, sku, image, updatedAt, updatedBy}`. Les noms sont recopiés pour pouvoir afficher une variante qui n'est plus active sur Shopify. Les boutons +/− utilisent `FieldValue.increment` pour ne pas s'écraser entre deux personnes.
 
+Collection `shopify_auto_sku` : écrite uniquement par la Cloud Function (variantes déjà traitées par les SKU automatiques), non accessible depuis l'app.
+
 Collection `fcm_tokens` : un document par appareil, d'identifiant le jeton lui-même, `{member, token, updatedAt}`.
 
 La session (qui est connecté) est dans `localStorage` (`current-user`), propre à chaque appareil.
@@ -73,21 +75,21 @@ Premier déploiement (18/10/2026), ce qui a été nécessaire : plan Blaze ; run
 `syncShopify` (dans `functions/index.js`, commandes + produits actifs) tourne toutes les 15 min et à chaque écriture de `app_data/shopify-sync-request`. Elle obtient un jeton (valable 24 h) par *client credentials grant* puis lit l'API Admin GraphQL (`SHOPIFY_API_VERSION`, à remonter quand Shopify retire la version). Le jeton Shopify ne doit **jamais** être dans `index.html` (site public) : tout passe par la fonction.
 
 Mise en place (**faite le 18/10/2026** : app « ARMY NOISY Manager » sur le Dev Dashboard, boutique `mstwntdnetwork.myshopify.com`, 3 secrets enregistrés) :
-1. Sur https://dev.shopify.com (Dev Dashboard, même organisation que la boutique) : créer une app, lui donner les scopes `read_orders` et `read_products`, publier une version et l'installer sur la boutique. Récupérer l'identifiant client et le secret client dans les paramètres de l'app.
+1. Sur https://dev.shopify.com (Dev Dashboard, même organisation que la boutique) : créer une app, lui donner les scopes `read_orders`, `read_products` et `write_products`, publier une version et l'installer sur la boutique. Récupérer l'identifiant client et le secret client dans les paramètres de l'app.
 2. `firebase functions:secrets:set SHOPIFY_STORE` (ex. `army-noisy.myshopify.com`), puis `SHOPIFY_CLIENT_ID`, puis `SHOPIFY_CLIENT_SECRET`.
 3. Déployer (étape 2 ci-dessus). Pour ne déployer que les notifications sans Shopify : `firebase deploy --only functions:notifyNewTasks,firestore:rules`.
 
 `read_orders` ne donne accès qu'aux 60 derniers jours de commandes, suffisant pour des commandes à expédier.
 
-### Prochaine tâche : refaire les SKU Shopify (demandé par Dorian le 17/10/2026)
+### SKU et poids automatiques des nouveaux produits (19/10/2026)
 
-Format `TNOM-COL-TAILLE`, ex. t-shirt « Grillz » blanc S → `TGRLZ-WHT-S` :
-- **T** = une lettre par type d'article, commune à tous les articles du même type (H hoodie, T t-shirt, C casquette, S sweat…) ; signaler à Dorian si deux types tombent sur la même lettre.
-- **NOM** : 5 lettres max (diminutif reconnaissable, ex. GRLZ) ; différencier deux produits qui donneraient le même.
-- **COL** : couleur en **3 lettres** (validé par Dorian) : BLK, WHT, RED, BLU, GRY, BEI…
-- **TAILLE** : telle quelle (XS, S, M, L, XL, XXL).
+Format de la boutique (posé par Dorian) : `TYPE-NOM-COULEUR-TAILLE`, ex. `TEE-PEARL-BLK-S`, `ZIP-RATZ-PRP-XL`, `BNE-PEARL-TU`.
+- **TYPE** : 3 lettres par type (TEE, HOO, ZIP hoodie zippé, SWT, JKT, JOG, BNE…).
+- **NOM** : premier mot du texte entre guillemets du titre, 6 lettres max (`"CHOPPERS"` → CHOPPE, `"NY LOGO"` → NY).
+- **COULEUR** : 3 lettres (BLK, WHT, RED, GRY, PRP, YLW, FLM…), seulement si le produit a une option Couleur(s).
+- **TAILLE** : telle quelle, `TU` si pas d'option Taille.
 
-Procédure : lire tous les produits et variantes via le connecteur Shopify, montrer à Dorian un tableau ancien SKU → nouveau SKU, **ne rien modifier avant sa validation**, garder une copie des anciens SKU, puis appliquer. Les SKU sont recopiés dans `stock_items` (champ `sku`) : ils se mettront à jour au prochain +/− ; l'affichage du Stock prend ceux de `shopify-products` (synchro toutes les 15 min).
+`autoSkuNewProducts` (dans `functions/index.js`, lancée par `syncShopify`, donc toutes les 15 min et à chaque « Actualiser ») donne ce SKU et le poids habituel du type aux variantes des produits (actifs ou brouillons) créés depuis `AUTO_SKU_SINCE` (19/10/2026), au moins 5 min après leur création. Codes de type, codes couleur et poids sont **appris des produits actifs plus anciens** (valeur la plus fréquente) ; les tables `TYPE_CODES`, `COLOR_CODES`, `DEFAULT_WEIGHTS` ne servent que sans exemple. Chaque variante n'est traitée qu'une fois (collection `shopify_auto_sku`, un document par produit avec ancien/nouveau SKU et poids) : une correction à la main dans Shopify n'est pas écrasée. Si deux produits du même type tombent sur le même NOM, le second est numéroté (`PEARL2`). **Les SKU existants ne sont jamais modifiés** (décision de Dorian du 19/10/2026). Nécessite le scope `write_products` sur l'app Shopify ; sans lui, l'erreur est dans `firebase functions:log --only syncShopifyScheduled` et la synchro continue normalement.
 
 Notifications push vérifiées en production le 18/10/2026 (app fermée sur iPhone).
 
