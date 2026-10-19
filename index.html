@@ -1428,7 +1428,10 @@
       </div>
       <div class="whoami">
         <span>Connecté(e) en tant que <strong id="whoami-name">—</strong></span>
-        <button class="ghost" id="logout-btn">Se déconnecter</button>
+        <span style="display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end;">
+          <button class="ghost" id="change-pin-btn">Changer mon code</button>
+          <button class="ghost" id="logout-btn">Se déconnecter</button>
+        </span>
       </div>
       <div class="panel" style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
         <div>
@@ -1439,7 +1442,7 @@
       </div>
       <div id="members"></div>
       <p style="color:var(--ink-soft); font-size:12px; margin-top:20px;">
-        Ces données (tâches, stock, équipe) sont partagées : tout le monde qui ouvre cet outil voit et modifie les mêmes informations.
+        Ces données (tâches, stock, équipe) sont partagées entre les membres connectés : tout le monde voit et modifie les mêmes informations.
       </p>
     </section>
 
@@ -1535,6 +1538,7 @@
 <div class="toast" id="toast"></div>
 
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging-compat.js"></script>
 <script>
@@ -1554,6 +1558,7 @@
 
   firebase.initializeApp(firebaseConfig);
   const db = firebase.firestore();
+  const auth = firebase.auth();
   let messaging = null;
   try{
     messaging = firebase.messaging();
@@ -3112,49 +3117,86 @@
   });
 
   // ---------- authentication ----------
+  // Le code est vérifié par la Cloud Function `onLoginRequest`, qui renvoie un jeton Firebase
+  // Authentication (prénom dans le claim `member`) ; le SDK garde la session sur l'appareil.
+  // Les règles Firestore n'ouvrent les données qu'aux membres connectés.
   let authMembers = [];
-  let authPins = {};
+  let membersWithPin = new Set();
   let currentUser = null;
   let pendingMember = null;
   let pendingPinBuffer = '';
-  let pendingPinStage = null; // for account creation: 'create' | 'confirm'
+  let pendingPinStage = null; // 'verify' | 'create' | 'confirm' | 'change-old' | 'change-new' | 'change-confirm'
   let pendingFirstPin = '';
+  let changeOldPin = '';
+  let changeForced = false;
+  let pushToken = null;
 
-  async function hashPin(pin){
-    const enc = new TextEncoder().encode(pin);
-    const buf = await crypto.subtle.digest('SHA-256', enc);
-    return [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('');
+  // Appel à la Cloud Function onLoginRequest : on écrit une demande dans login_requests
+  // (id au hasard), la fonction y écrit la réponse, on la lit puis on l'efface.
+  // (L'organisation Google interdit les fonctions appelables publiquement.)
+  function serverCall(action, data){
+    const id = [...crypto.getRandomValues(new Uint8Array(16))].map(b=>b.toString(16).padStart(2,'0')).join('');
+    const ref = db.collection('login_requests').doc(id);
+    return ref.set({ action, ...(data || {}), createdAt: Date.now() }).then(()=>new Promise((resolve, reject)=>{
+      let off = ()=>{};
+      const timer = setTimeout(()=>{ off(); reject(new Error('timeout')); }, 30000);
+      off = ref.onSnapshot(snap=>{
+        const d = snap.data();
+        if(!d || !('ok' in d)) return; // pas encore traitée
+        clearTimeout(timer); off();
+        ref.delete().catch(()=>{});
+        if(d.ok) resolve(d.result);
+        else{ const e = new Error(d.error); e.fromServer = true; reject(e); }
+      }, err=>{ clearTimeout(timer); reject(err); });
+    }));
   }
-
-  async function saveAuthPins(){
-    await dbSet('member-pins', JSON.stringify(authPins));
+  // Message d'erreur de la fonction (en français), sinon message générique.
+  function fnError(e){
+    if(e && e.fromServer && e.message) return e.message;
+    if(e && e.message === 'timeout') return 'Le serveur ne répond pas, réessaie dans un instant.';
+    return 'Connexion impossible, vérifie le réseau et réessaie.';
   }
 
   async function boot(){
     const logoSrc = document.querySelector('header .brand-logo').getAttribute('src');
     document.getElementById('login-logo').src = logoSrc;
+    localStorage.removeItem('current-user'); // ancienne session, avant Firebase Authentication
 
-    const [m, pins] = await Promise.all([
-      safeGet('members'), safeGet('member-pins')
-    ]);
-    authMembers = m ? JSON.parse(m) : [];
-    authPins = pins ? JSON.parse(pins) : {};
-    currentUser = localStorage.getItem('current-user') || null;
-
-    if(currentUser && authMembers.includes(currentUser)){
-      enterApp();
-    } else {
-      currentUser = null;
-      renderLoginSelect();
+    const user = await new Promise(resolve=>{
+      const off = auth.onAuthStateChanged(u=>{ off(); resolve(u); });
+    });
+    if(user){
+      try{ currentUser = (await user.getIdTokenResult()).claims.member || null; }
+      catch(e){ console.error(e); currentUser = null; }
     }
+    if(currentUser) enterApp();
+    else showLogin();
+  }
+
+  async function showLogin(){
+    document.getElementById('app-root').style.display = 'none';
+    document.getElementById('login-screen').style.display = 'flex';
+    const body = document.getElementById('login-body');
+    body.innerHTML = '<div class="login-sub">Chargement…</div>';
+    try{
+      const s = await serverCall('status');
+      authMembers = s.members || [];
+      membersWithPin = new Set(s.withPin || []);
+    }catch(e){
+      console.error(e);
+      body.innerHTML = `<div class="login-sub">${escapeHtml(fnError(e))}</div>
+        <button class="primary" id="login-retry" style="width:100%;">Réessayer</button>`;
+      document.getElementById('login-retry').addEventListener('click', showLogin);
+      return;
+    }
+    renderLoginSelect();
   }
 
   function enterApp(){
     document.getElementById('login-screen').style.display = 'none';
     document.getElementById('app-root').style.display = '';
-    if(!selectedNotesMember && authMembers.includes(currentUser)){
-      selectedNotesMember = currentUser;
-    }
+    if(!selectedNotesMember) selectedNotesMember = currentUser;
+    updateWhoami();
     initCalendar();
     loadAll();
     if('Notification' in window && Notification.permission === 'granted'){
@@ -3168,12 +3210,28 @@
   }
 
   document.getElementById('logout-btn').addEventListener('click', async ()=>{
-    localStorage.removeItem('current-user');
-    currentUser = null;
+    // Cet appareil ne reçoit plus les notifications de ce membre.
+    if(pushToken) await db.collection('fcm_tokens').doc(pushToken).delete().catch(e=>console.error(e));
+    await auth.signOut();
+    location.reload(); // repart de zéro (écoutes temps réel comprises)
+  });
+
+  document.getElementById('change-pin-btn').addEventListener('click', ()=>startPinChange(false));
+
+  // Changement de code : depuis Équipe, ou imposé après connexion avec un ancien code.
+  function startPinChange(forced, oldPin){
+    changeForced = forced;
+    changeOldPin = oldPin || '';
+    pendingMember = currentUser;
     document.getElementById('app-root').style.display = 'none';
     document.getElementById('login-screen').style.display = 'flex';
-    renderLoginSelect();
-  });
+    renderLoginPin(forced ? 'change-new' : 'change-old');
+  }
+
+  function leavePinChange(){
+    document.getElementById('login-screen').style.display = 'none';
+    document.getElementById('app-root').style.display = '';
+  }
 
   // ---- login screen rendering ----
   function renderLoginSelect(){
@@ -3196,11 +3254,7 @@
       tile.innerHTML = `<span class="avatar">${escapeHtml(initials(m))}</span><span>${escapeHtml(m)}</span>`;
       tile.addEventListener('click', ()=>{
         pendingMember = m;
-        if(authPins[m]){
-          renderLoginPin('verify');
-        } else {
-          renderLoginPin('create');
-        }
+        renderLoginPin(membersWithPin.has(m) ? 'verify' : 'create');
       });
       grid.appendChild(tile);
     });
@@ -3218,37 +3272,47 @@
       <button class="primary" id="first-account-next" style="width:100%;">Continuer</button>
       <div class="login-error" id="login-error"></div>
     `;
-    document.getElementById('first-account-next').addEventListener('click', async ()=>{
+    document.getElementById('first-account-next').addEventListener('click', ()=>{
       const name = document.getElementById('first-account-name').value.trim();
       if(!name){ document.getElementById('login-error').textContent = 'Entre un prénom.'; return; }
-      members = [name];
-      await saveMembers();
-      authMembers = [name];
-      pendingMember = name;
+      pendingMember = name; // ajouté à l'équipe par la fonction `login`
       renderLoginPin('create');
     });
   }
 
+  const PIN_TEXTS = {
+    'verify': [m=>`Bonjour ${escapeHtml(m)}`, 'Entre ton code à 4 chiffres'],
+    'create': [()=>'Crée ton code', 'Choisis un code à 4 chiffres'],
+    'confirm': [()=>'Confirme ton code', 'Ressaisis le même code'],
+    'change-old': [()=>'Changer mon code', 'Entre ton code actuel'],
+    'change-new': [()=>'Nouveau code', 'Choisis un nouveau code à 4 chiffres'],
+    'change-confirm': [()=>'Confirme ton code', 'Ressaisis le nouveau code']
+  };
+
   function renderLoginPin(mode){
-    // mode: 'verify' | 'create' (first entry) | 'confirm' (second entry for create)
     pendingPinStage = mode;
     pendingPinBuffer = '';
+    const changing = mode.startsWith('change-');
     const body = document.getElementById('login-body');
-    const title = mode === 'verify' ? `Bonjour ${escapeHtml(pendingMember)}` :
-                  mode === 'create' ? `Crée ton code` : 'Confirme ton code';
-    const sub = mode === 'verify' ? 'Entre ton code à 4 chiffres' :
-                mode === 'create' ? 'Choisis un code à 4 chiffres' : 'Ressaisis le même code';
+    const [title, sub] = PIN_TEXTS[mode];
+    const back = changing
+      ? (changeForced ? '' : '<span class="login-back" id="login-back">‹ Annuler</span>')
+      : '<span class="login-back" id="login-back">‹ Changer de personne</span>';
+    const notice = changing && changeForced
+      ? '<div class="login-sub" style="margin-top:-4px;">Par sécurité, les anciens codes doivent être changés une fois.</div>' : '';
     body.innerHTML = `
-      <span class="login-back" id="login-back">‹ Changer de personne</span>
-      <div class="login-title">${title}</div>
+      ${back}
+      <div class="login-title">${title(pendingMember || '')}</div>
       <div class="login-sub">${sub}</div>
+      ${notice}
       <div class="pin-dots" id="pin-dots">
         <span></span><span></span><span></span><span></span>
       </div>
       <input type="tel" inputmode="numeric" pattern="[0-9]*" maxlength="4" id="pin-input" autocomplete="off" style="position:absolute; opacity:0; height:0; width:0;">
       <div class="login-error" id="login-error"></div>
     `;
-    document.getElementById('login-back').addEventListener('click', renderLoginSelect);
+    const backEl = document.getElementById('login-back');
+    if(backEl) backEl.addEventListener('click', changing ? leavePinChange : renderLoginSelect);
     const pinInput = document.getElementById('pin-input');
     pinInput.value = '';
     pinInput.focus();
@@ -3270,42 +3334,64 @@
     });
   }
 
-  async function handlePinComplete(digits, pinInput){
+  function pinRetry(pinInput, message){
     const errEl = document.getElementById('login-error');
-    if(pendingPinStage === 'verify'){
-      const hash = await hashPin(digits);
-      if(hash === authPins[pendingMember]){
-        await loginAs(pendingMember);
-      } else {
-        errEl.textContent = 'Code incorrect, réessaie.';
-        pinInput.value = '';
-        updatePinDots(0);
-        pinInput.focus();
-      }
-    } else if(pendingPinStage === 'create'){
-      pendingFirstPin = digits;
-      renderLoginPin('confirm');
-    } else if(pendingPinStage === 'confirm'){
-      if(digits === pendingFirstPin){
-        authPins[pendingMember] = await hashPin(digits);
-        await saveAuthPins();
-        await loginAs(pendingMember);
-      } else {
-        errEl.textContent = "Les deux codes ne correspondent pas.";
-        pendingPinStage = 'create';
-        pinInput.value = '';
-        updatePinDots(0);
-        setTimeout(()=>renderLoginPin('create'), 900);
-      }
-    }
+    errEl.textContent = message;
+    errEl.style.color = '';
+    pinInput.disabled = false;
+    pinInput.value = '';
+    updatePinDots(0);
+    pinInput.focus();
   }
 
-  async function loginAs(name){
-    currentUser = name;
-    localStorage.setItem('current-user', name);
-    updateWhoami();
-    enterApp();
-    requestNotifPermission();
+  async function handlePinComplete(digits, pinInput){
+    const errEl = document.getElementById('login-error');
+    const stage = pendingPinStage;
+    if(stage === 'create' || stage === 'change-new'){
+      pendingFirstPin = digits;
+      renderLoginPin(stage === 'create' ? 'confirm' : 'change-confirm');
+      return;
+    }
+    if(stage === 'change-old'){
+      changeOldPin = digits;
+      renderLoginPin('change-new');
+      return;
+    }
+    if((stage === 'confirm' || stage === 'change-confirm') && digits !== pendingFirstPin){
+      errEl.textContent = 'Les deux codes ne correspondent pas.';
+      setTimeout(()=>renderLoginPin(stage === 'confirm' ? 'create' : 'change-new'), 900);
+      return;
+    }
+    pinInput.disabled = true;
+    errEl.textContent = 'Vérification…';
+    errEl.style.color = 'var(--ink-soft)';
+    try{
+      if(stage === 'change-confirm'){
+        await serverCall('changePin', { member: currentUser, oldPin: changeOldPin, newPin: digits });
+        changeOldPin = '';
+        toast('Code changé');
+        if(changeForced) enterApp(); else leavePinChange();
+        return;
+      }
+      const res = await serverCall('login', { member: pendingMember, pin: digits, create: stage === 'confirm' });
+      await auth.signInWithCustomToken(res.token);
+      currentUser = pendingMember;
+      if(res.mustChange){
+        startPinChange(true, digits);
+        return;
+      }
+      enterApp();
+      requestNotifPermission();
+    }catch(e){
+      console.error(e);
+      if(stage === 'change-confirm' && !changeForced && /incorrect|essais/i.test(e.message || '')){
+        // ancien code faux : on le redemande
+        renderLoginPin('change-old');
+        document.getElementById('login-error').textContent = fnError(e);
+        return;
+      }
+      pinRetry(pinInput, fnError(e));
+    }
   }
 
   function requestNotifPermission(){
@@ -3327,6 +3413,7 @@
       const registration = await navigator.serviceWorker.register('firebase-messaging-sw.js');
       const token = await messaging.getToken({ vapidKey: VAPID_KEY, serviceWorkerRegistration: registration });
       if(token){
+        pushToken = token;
         await db.collection('fcm_tokens').doc(token).set({
           member: currentUser,
           token,
