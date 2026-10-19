@@ -1707,16 +1707,6 @@
     ['VERT', 'green|vert|verte|kaki|khaki'], ['BEIGE', 'beige|sand|crème|creme|cream'],
     ['VIOLET', 'purple|violet|violette'], ['JAUNE', 'yellow|jaune'], ['MARRON', 'brown|marron']
   ];
-  // Produits sans option Couleur dans Shopify ni couleur dans le titre : couleur fixée
-  // à la main (demande de Dorian, 19/10/2026). Clé = titre en capitales sans guillemets.
-  const titleKey = t => t.replace(/["“”«»]/g, '').replace(/\s+/g, ' ').trim().toUpperCase();
-  const MANUAL_COLORS = {
-    'FLAME HOODIE ZIP': 'NOIR',
-    'WHEEZY HOODIE ZIP': 'GRIS',
-    'PULL UP YOUR PANTS TEE': 'BLANC',
-    'FLAME JOGGER': 'NOIR',
-    'PEARL BEANIE': 'OC'
-  };
   function colorFromTitle(title){
     const hit = TITLE_COLORS.find(([, alts])=>matches(word(alts), title));
     return hit ? hit[0] : '';
@@ -1729,9 +1719,8 @@
       // Option combinée du type « CASQUETTE BEIGE TEE BLANC » : on garde la couleur de la pièce.
       let color = cs.color.replace(/^.*(?<!\p{L})(?:tee|t-shirt|hoodie|sweat)\s+/iu, '');
       const size = cs.size;
-      // Pas d'option couleur : couleur donnée par Dorian pour ce produit, sinon couleur
-      // écrite dans le titre (« JOGGER NOÏSY LOGO BLACK »).
-      if(!color) color = MANUAL_COLORS[titleKey(it.title)] || colorFromTitle(it.title);
+      // Pas d'option couleur : couleur écrite dans le titre (« JOGGER NOÏSY LOGO BLACK »).
+      if(!color) color = colorFromTitle(it.title);
       const key = kind + '|' + color.toUpperCase() + '|' + size.toUpperCase();
       const row = map.get(key) || {kind, label: kind < kindRules().length ? kindRules()[kind].label : 'Autre', color, size, qty: 0};
       row.qty += it.qty;
