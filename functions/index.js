@@ -532,7 +532,7 @@ exports.syncShopifyOnRequest = functions
 
 // ---------- Connexion (code à 4 chiffres vérifié ici, plus dans le navigateur) ----------
 // Les codes sont dans la collection auth_pins (un document par prénom, hash scrypt salé),
-// illisible depuis l'app. Après un bon code, la fonction renvoie un jeton Firebase
+// illisible depuis l'app. Après un bon code, la fonction donne un jeton Firebase
 // Authentication (custom token, claim `member`) : les règles Firestore n'ouvrent
 // les données qu'aux membres connectés.
 // Blocage : 5 erreurs → 15 min, puis 30 min, 1 h… (24 h max) ; le membre reçoit une notification.
@@ -632,19 +632,24 @@ async function checkPin(member, pin){
   throw new HttpsError('permission-denied', `Code incorrect (encore ${res.left} essai${res.left > 1 ? 's' : ''}).`);
 }
 
+// Les fonctions ne peuvent pas être appelées directement depuis le site : l'organisation
+// Google armynoisy.com interdit de les rendre publiques (règle « partage limité au domaine »).
+// Le site écrit donc une demande dans login_requests/{id au hasard} et attend la réponse,
+// que onLoginRequest écrit dans le même document (le code y est alors effacé).
+
 // Écran de connexion : prénoms de l'équipe et qui a déjà un code.
-exports.loginStatus = functions.https.onCall(async ()=>{
+async function loginStatus(){
   await migrateLegacyPins();
   const members = await readMembers();
   const snaps = members.length ? await db.getAll(...members.map(pinRef)) : [];
   return { members, withPin: members.filter((m, i)=>snaps[i].exists && hasPin(snaps[i].data())) };
-});
+}
 
 // Connexion, ou création du code d'un membre qui n'en a pas encore
 // (ou du tout premier membre si l'équipe est vide).
-exports.login = functions.https.onCall(async (data)=>{
-  const member = String((data && data.member) || '').trim().slice(0, 40);
-  const pin = String((data && data.pin) || '');
+async function login(data){
+  const member = String(data.member || '').trim().slice(0, 40);
+  const pin = String(data.pin || '');
   if(!member || !PIN_RE.test(pin)) throw new HttpsError('invalid-argument', 'Code à 4 chiffres attendu.');
   await migrateLegacyPins();
   const members = await readMembers();
@@ -664,21 +669,45 @@ exports.login = functions.https.onCall(async (data)=>{
   }
   const token = await admin.auth().createCustomToken(uidOf(member), { member });
   return { token, mustChange: res.legacy };
-});
+}
 
 // Changement de code par le membre connecté (obligatoire après un ancien code).
-exports.changePin = functions.https.onCall(async (data, context)=>{
-  const member = context.auth && context.auth.token.member;
+// Les règles Firestore garantissent que `member` est le prénom de celui qui a écrit la demande.
+async function changePin(data){
+  const member = String(data.member || '');
+  const oldPin = String(data.oldPin || '');
+  const newPin = String(data.newPin || '');
   if(!member) throw new HttpsError('unauthenticated', "Connecte-toi d'abord.");
-  const oldPin = String((data && data.oldPin) || '');
-  const newPin = String((data && data.newPin) || '');
   if(!PIN_RE.test(oldPin) || !PIN_RE.test(newPin)) throw new HttpsError('invalid-argument', 'Code à 4 chiffres attendu.');
   if(oldPin === newPin) throw new HttpsError('invalid-argument', "Choisis un code différent de l'ancien.");
   const res = await checkPin(member, oldPin);
   if(res.noPin) throw new HttpsError('failed-precondition', "Ce membre n'a pas de code.");
   await pinRef(member).set(newPinRecord(newPin));
   return { ok: true };
-});
+}
+
+const LOGIN_ACTIONS = { status: loginStatus, login, changePin };
+const LOGIN_REQUEST_TTL_MS = 10 * 60 * 1000;
+
+exports.onLoginRequest = functions.firestore
+  .document('login_requests/{id}')
+  .onCreate(async (snap)=>{
+    const req = snap.data() || {};
+    const action = LOGIN_ACTIONS[req.action];
+    let reply;
+    try{
+      if(!action) throw new HttpsError('invalid-argument', 'Demande inconnue.');
+      reply = { ok: true, result: await action(req) };
+    }catch(e){
+      if(!(e instanceof HttpsError)) console.error('login_requests', req.action, e);
+      reply = { ok: false, error: e instanceof HttpsError ? e.message : 'Erreur du serveur, réessaie.' };
+    }
+    // Remplace la demande (et donc le code saisi) par la réponse.
+    await snap.ref.set({ ...reply, doneAt: Date.now() });
+    // Ménage : demandes dont l'app n'a pas effacé la réponse.
+    const old = await db.collection('login_requests').where('doneAt', '<', Date.now() - LOGIN_REQUEST_TTL_MS).limit(50).get();
+    await Promise.all(old.docs.map(d=>d.ref.delete()));
+  });
 
 // Membre retiré de l'équipe : ses sessions sont fermées (au plus 1 h après)
 // et ses appareils ne reçoivent plus les notifications.
