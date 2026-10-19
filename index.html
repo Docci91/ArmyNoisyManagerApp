@@ -1297,6 +1297,7 @@
     --ink:#FFFFFF; --ink-soft:#A8A8A8; --line:#1F1F1F;
     --faint:#949494; --dim:#5C5C5C;
     --btn:#2B2B2B; --btn-hover:#383838; --btn-line:#4A4A4A;
+    --note:#2E150C; --note-hover:#3D1C10; --note-line:#FF5A36;  /* notes et jours avec tâche : brun-orange sombre */
     --radius-lg:0px; --radius-md:0px; --radius-sm:0px;
     --font:'Barlow', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     --ease-out:cubic-bezier(0.23,1,0.32,1);
@@ -1612,6 +1613,16 @@
   #login-screen .member-tile{ border-radius:0; background:#111; border:1px solid #2a2a2a; font-family:var(--font-display); text-transform:uppercase; }
   #login-screen .member-tile:hover{ transform:none; border-color:#fff; }
   .pin-dots span{ border-radius:0; }
+  /* notes : fond brun-orange sombre et bord orange, pour qu'elles ressortent du noir */
+  .note-card, .pinned-row{ background:var(--note); border:0; border-left:4px solid var(--note-line); padding:12px 14px; margin-bottom:6px; cursor:pointer; transition:background .14s; }
+  .note-card:hover, .pinned-row:hover{ background:var(--note-hover); }
+  .note-card .note-snippet, .pinned-snippet{ color:#d9c3ba; }
+  .note-card .note-date, .pinned-owner{ color:#b89a8e; }
+  .pin-tag{ border-color:#7a3b25; color:#f0c9b8; }
+  /* calendrier : un jour qui a une tâche prend la même couleur que les notes */
+  .cal-day.has-tasks{ background:var(--note); color:#fff; }
+  .cal-day.has-tasks:hover{ background:var(--note-hover); }
+  .cal-day.has-tasks.selected, .cal-day.selected{ background:#3a3a3a; }
   @media (prefers-reduced-motion:reduce){ .q.bump, .stock-total.bump, .stock-pop, .task-form{ animation:none; } }
 </style>
 </head>
