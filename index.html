@@ -1102,11 +1102,14 @@
   .kind-table td, .kind-table th{ padding:6px 12px; }
   .kind-table td{ vertical-align:middle; }
   .kind-table .kind-type{ font-weight:700; }
-  .sols-tag{
+  .base-tag{
     display:inline-block; margin-left:6px; padding:1px 7px;
-    border-radius:6px; background:#FFD60A; color:#111;
-    font-size:11px; font-weight:800; letter-spacing:.06em; vertical-align:1px;
+    border-radius:6px;
+    font-size:11px; font-weight:800; letter-spacing:.06em; vertical-align:1px; white-space:nowrap;
   }
+  .base-sols{ background:#FFD60A; color:#111; }
+  .base-printtex{ background:#4CC9F0; color:#0B2530; }
+  .base-a-cmd{ background:#FF2D95; color:#fff; }
   .kind-table tr.kind-first td{ border-top:1px solid var(--ink-soft); }
   .kind-size{ display:inline-block; min-width:34px; padding:2px 6px; border-radius:6px; background:var(--surface-2); font-weight:700; font-size:12.5px; }
   /* Article à préparer déjà disponible dans l'onglet Stock : « N en stock » en vert. */
@@ -1716,10 +1719,16 @@
     const hit = TITLE_COLORS.find(([, alts])=>matches(word(alts), title));
     return hit ? hit[0] : '';
   }
-  // Articles « NOÏSY LOGO » : base SOLS, différente des autres pièces → comptés à part
-  // et signalés par une étiquette voyante.
-  const isSolsBase = title => /no[iï]sy\s+logo/i.test(title);
-  const solsTag = r => r.sols ? ' <span class="sols-tag">SOLS</span>' : '';
+  // Base (fournisseur de la pièce vierge) : comptée à part et signalée par une étiquette
+  // de couleur. « NOÏSY LOGO » → SOLS, "PEARL" DICKIES JACKET → A CMD (à commander),
+  // tout le reste → PRINTTEX. Ordre = ordre d'affichage dans un même type.
+  const BASES = ['PRINTTEX', 'SOLS', 'A CMD'];
+  function baseOf(title){
+    if(/no[iï]sy\s+logo/i.test(title)) return 'SOLS';
+    if(/pearl/i.test(title) && /dickies|jacket/i.test(title)) return 'A CMD';
+    return 'PRINTTEX';
+  }
+  const baseTag = r => ` <span class="base-tag base-${r.base.replace(/\s+/g, '-').toLowerCase()}">${r.base}</span>`;
   function buildKindRows(orders){
     const map = new Map();
     orders.forEach(o=>o.items.forEach(it=>{
@@ -1730,14 +1739,14 @@
       const size = cs.size;
       // Pas d'option couleur : couleur écrite dans le titre (« JOGGER NOÏSY LOGO BLACK »).
       if(!color) color = colorFromTitle(it.title);
-      const sols = isSolsBase(it.title);
-      const key = kind + '|' + sols + '|' + color.toUpperCase() + '|' + size.toUpperCase();
-      const row = map.get(key) || {kind, sols, label: kind < kindRules().length ? kindRules()[kind].label : 'Autre', color, size, qty: 0};
+      const base = baseOf(it.title);
+      const key = kind + '|' + base + '|' + color.toUpperCase() + '|' + size.toUpperCase();
+      const row = map.get(key) || {kind, base, label: kind < kindRules().length ? kindRules()[kind].label : 'Autre', color, size, qty: 0};
       row.qty += it.qty;
       map.set(key, row);
     }));
     const sizeRank = x=>{ const i = SIZE_ORDER.indexOf(x.toUpperCase()); return i < 0 ? 99 : i; };
-    return [...map.values()].sort((a,b)=> (a.kind - b.kind) || (a.sols - b.sols) || a.color.localeCompare(b.color, 'fr') || (sizeRank(a.size) - sizeRank(b.size)));
+    return [...map.values()].sort((a,b)=> (a.kind - b.kind) || (BASES.indexOf(a.base) - BASES.indexOf(b.base)) || a.color.localeCompare(b.color, 'fr') || (sizeRank(a.size) - sizeRank(b.size)));
   }
   const kindLabel = r => [r.label, r.color, r.size].filter(Boolean).join(' · ');
 
@@ -1762,7 +1771,8 @@
         .center{ text-align:center; white-space:nowrap; } .sku{ white-space:nowrap; }
         .qty{ display:inline-block; min-width:22px; padding:2px 6px; border-radius:6px; font-weight:700; }
         .qty.many{ background:#111; color:#fff; }
-        .sols-tag{ display:inline-block; margin-left:6px; padding:1px 6px; border-radius:4px; background:#FFD60A; color:#111; font-size:11px; font-weight:800; letter-spacing:.06em; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+        .base-tag{ display:inline-block; margin-left:6px; padding:1px 6px; border-radius:4px; font-size:11px; font-weight:800; letter-spacing:.06em; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+        .base-sols{ background:#FFD60A; color:#111; } .base-printtex{ background:#4CC9F0; color:#0B2530; } .base-a-cmd{ background:#FF2D95; color:#fff; }
         .check{ display:inline-block; width:14px; height:14px; border:1.5px solid #111; border-radius:3px; margin-left:10px; vertical-align:middle; }
       </style></head><body>
       <h1>ARMY NOÏSY — Articles à préparer</h1>
@@ -1777,7 +1787,7 @@
       <h2>Pièces à sortir par type</h2>
       <table><thead><tr><th>Type</th><th>Couleur</th><th class="center">Taille</th><th class="center">Qté</th></tr></thead><tbody>
       ${buildKindRows(orders).map(r=>`<tr>
-        <td><strong>${escapeHtml(r.label)}</strong>${solsTag(r)}</td>
+        <td><strong>${escapeHtml(r.label)}</strong>${baseTag(r)}</td>
         <td>${escapeHtml(r.color || '—')}</td>
         <td class="center">${escapeHtml(r.size || '—')}</td>
         <td class="center"><span class="qty${r.qty > 1 ? ' many' : ''}">${r.qty}</span><span class="check"></span></td>
@@ -1879,7 +1889,7 @@
           <thead><tr><th>Type</th><th>Couleur</th><th class="center">Taille</th><th class="center">Qté</th></tr></thead>
           <tbody>
             ${kindRows.map((r, i)=>`<tr${i > 0 && kindRows[i - 1].kind !== r.kind ? ' class="kind-first"' : ''}>
-              <td class="kind-type">${escapeHtml(r.label)}${solsTag(r)}</td>
+              <td class="kind-type">${escapeHtml(r.label)}${baseTag(r)}</td>
               <td>${escapeHtml(r.color || '—')}</td>
               <td class="center"><span class="kind-size">${escapeHtml(r.size || '—')}</span></td>
               <td class="center"><span class="prep-qty${r.qty > 1 ? ' many' : ''}">${r.qty}</span></td>
