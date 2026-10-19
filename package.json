@@ -1,0 +1,25 @@
+{
+  "name": "armynoisymanagerapp",
+  "version": "1.0.0",
+  "description": "ARMY NOÏSY — app de gestion d'équipe",
+  "scripts": {
+    "test": "playwright test",
+    "test:ui": "playwright test --ui"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Docci91/ArmyNoisyManagerApp.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Docci91/ArmyNoisyManagerApp/issues"
+  },
+  "homepage": "https://github.com/Docci91/ArmyNoisyManagerApp#readme",
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "@types/node": "^26.6.5"
+  },
+  "private": true
+}
