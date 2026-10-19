@@ -528,3 +528,170 @@ exports.syncShopifyOnRequest = functions
     }
     await syncShopify();
   });
+
+// ---------- Connexion (code à 4 chiffres vérifié ici, plus dans le navigateur) ----------
+// Les codes sont dans la collection auth_pins (un document par prénom, hash scrypt salé),
+// illisible depuis l'app. Après un bon code, la fonction renvoie un jeton Firebase
+// Authentication (custom token, claim `member`) : les règles Firestore n'ouvrent
+// les données qu'aux membres connectés.
+// Blocage : 5 erreurs → 15 min, puis 30 min, 1 h… (24 h max) ; le membre reçoit une notification.
+// Prérequis : Authentication activé dans la console, et le rôle « Créateur de jetons du
+// compte de service » pour armynoisymanagerapp@appspot.gserviceaccount.com (createCustomToken).
+
+const crypto = require('crypto');
+const { HttpsError } = functions.https;
+
+const PIN_RE = /^\d{4}$/;
+const FAILS_PER_LOCK = 5;
+const LEGACY_PINS_KEEP_MS = 24 * 3600 * 1000;
+
+const pinRef = member => db.collection('auth_pins').doc(encodeURIComponent(member));
+const uidOf = member => `member:${member}`;
+const sha256 = s => crypto.createHash('sha256').update(s).digest('hex');
+const scrypt = (pin, salt) => crypto.scryptSync(pin, salt, 32).toString('hex');
+const hasPin = rec => !!(rec && (rec.hash || rec.legacySha256));
+
+function newPinRecord(pin){
+  const salt = crypto.randomBytes(16).toString('hex');
+  return { salt, hash: scrypt(pin, salt), fails: 0, lockedUntil: 0, updatedAt: new Date().toISOString() };
+}
+
+function pinMatches(rec, pin){
+  if(rec.hash) return crypto.timingSafeEqual(Buffer.from(scrypt(pin, rec.salt), 'hex'), Buffer.from(rec.hash, 'hex'));
+  return !!rec.legacySha256 && sha256(pin) === rec.legacySha256;
+}
+
+function lockDurationMs(fails){
+  if(fails % FAILS_PER_LOCK !== 0) return 0;
+  return Math.min(15 * 60 * 1000 * 2 ** (fails / FAILS_PER_LOCK - 1), 24 * 3600 * 1000);
+}
+
+const hourInParis = ms => new Intl.DateTimeFormat('fr-FR', { timeZone: REMINDER_TZ, hour: '2-digit', minute: '2-digit' }).format(new Date(ms));
+
+async function readMembers(){
+  const snap = await db.collection('app_data').doc('members').get();
+  try{ return snap.exists ? JSON.parse(snap.data().value || '[]') : []; }
+  catch(e){ return []; }
+}
+
+// Anciens codes (app_data/member-pins, SHA-256 sans sel, lisibles par tous) : recopiés une fois
+// dans auth_pins, marqués à changer, puis le document est supprimé au bout de 24 h.
+async function migrateLegacyPins(){
+  const legacyRef = db.collection('app_data').doc('member-pins');
+  const legacy = await legacyRef.get();
+  if(!legacy.exists) return;
+  const stateRef = db.collection('server_state').doc('pins-migration');
+  const state = await stateRef.get();
+  if(state.exists){
+    if(Date.now() - state.data().at > LEGACY_PINS_KEEP_MS) await legacyRef.delete();
+    return;
+  }
+  let pins = {};
+  try{ pins = JSON.parse(legacy.data().value || '{}'); }catch(e){}
+  const names = Object.keys(pins).filter(n=>typeof pins[n] === 'string');
+  const existing = names.length ? await db.getAll(...names.map(pinRef)) : [];
+  const batch = db.batch();
+  names.forEach((name, i)=>{
+    if(!existing[i].exists) batch.set(pinRef(name), { legacySha256: pins[name], fails: 0, lockedUntil: 0 });
+  });
+  batch.set(stateRef, { at: Date.now() });
+  await batch.commit();
+}
+
+// Vérifie le code d'un membre en comptant les erreurs.
+// Renvoie { ok, legacy } ou { noPin } ; lève une HttpsError si le code est faux ou le compte bloqué.
+async function checkPin(member, pin){
+  const ref = pinRef(member);
+  const now = Date.now();
+  const res = await db.runTransaction(async tx=>{
+    const snap = await tx.get(ref);
+    const rec = snap.exists ? snap.data() : {};
+    if(!hasPin(rec)) return { noPin: true };
+    if((rec.lockedUntil || 0) > now) return { lockedUntil: rec.lockedUntil };
+    if(pinMatches(rec, pin)){
+      if(rec.fails) tx.update(ref, { fails: 0, lockedUntil: 0 });
+      return { ok: true, legacy: !rec.hash };
+    }
+    const fails = (rec.fails || 0) + 1;
+    const lock = lockDurationMs(fails);
+    tx.update(ref, { fails, lockedUntil: lock ? now + lock : 0 });
+    return { justLocked: lock ? now + lock : 0, left: FAILS_PER_LOCK - (fails % FAILS_PER_LOCK) };
+  });
+  if(res.ok || res.noPin) return res;
+  if(res.justLocked){
+    const { tokensByMember } = await loadMembersAndTokens();
+    await notifyMembers([member], tokensByMember, {
+      title: 'Connexion bloquée — ARMY NOÏSY',
+      body: `${FAILS_PER_LOCK} codes faux sur ton compte. Bloqué jusqu'à ${hourInParis(res.justLocked)}. Si ce n'était pas toi, change ton code.`,
+      tag: `lock-${member}`
+    }, new Set()).catch(e=>console.error('alerte blocage', e));
+  }
+  const until = res.lockedUntil || res.justLocked;
+  if(until) throw new HttpsError('resource-exhausted', `Trop d'essais. Réessaie après ${hourInParis(until)}.`);
+  throw new HttpsError('permission-denied', `Code incorrect (encore ${res.left} essai${res.left > 1 ? 's' : ''}).`);
+}
+
+// Écran de connexion : prénoms de l'équipe et qui a déjà un code.
+exports.loginStatus = functions.https.onCall(async ()=>{
+  await migrateLegacyPins();
+  const members = await readMembers();
+  const snaps = members.length ? await db.getAll(...members.map(pinRef)) : [];
+  return { members, withPin: members.filter((m, i)=>snaps[i].exists && hasPin(snaps[i].data())) };
+});
+
+// Connexion, ou création du code d'un membre qui n'en a pas encore
+// (ou du tout premier membre si l'équipe est vide).
+exports.login = functions.https.onCall(async (data)=>{
+  const member = String((data && data.member) || '').trim().slice(0, 40);
+  const pin = String((data && data.pin) || '');
+  if(!member || !PIN_RE.test(pin)) throw new HttpsError('invalid-argument', 'Code à 4 chiffres attendu.');
+  await migrateLegacyPins();
+  const members = await readMembers();
+  const firstMember = members.length === 0;
+  if(!firstMember && !members.includes(member)) throw new HttpsError('not-found', 'Membre inconnu.');
+
+  let res = await checkPin(member, pin);
+  if(res.noPin){
+    if(!data.create) throw new HttpsError('failed-precondition', "Ce membre n'a pas encore de code.");
+    // create() échoue si un autre appareil vient de créer le code entre-temps.
+    try{ await pinRef(member).create(newPinRecord(pin)); }
+    catch(e){ throw new HttpsError('already-exists', "Un code vient d'être créé pour ce membre."); }
+    if(firstMember){
+      await db.collection('app_data').doc('members').set({ value: JSON.stringify([member]), updatedAt: new Date().toISOString() });
+    }
+    res = { ok: true, legacy: false };
+  }
+  const token = await admin.auth().createCustomToken(uidOf(member), { member });
+  return { token, mustChange: res.legacy };
+});
+
+// Changement de code par le membre connecté (obligatoire après un ancien code).
+exports.changePin = functions.https.onCall(async (data, context)=>{
+  const member = context.auth && context.auth.token.member;
+  if(!member) throw new HttpsError('unauthenticated', "Connecte-toi d'abord.");
+  const oldPin = String((data && data.oldPin) || '');
+  const newPin = String((data && data.newPin) || '');
+  if(!PIN_RE.test(oldPin) || !PIN_RE.test(newPin)) throw new HttpsError('invalid-argument', 'Code à 4 chiffres attendu.');
+  if(oldPin === newPin) throw new HttpsError('invalid-argument', "Choisis un code différent de l'ancien.");
+  const res = await checkPin(member, oldPin);
+  if(res.noPin) throw new HttpsError('failed-precondition', "Ce membre n'a pas de code.");
+  await pinRef(member).set(newPinRecord(newPin));
+  return { ok: true };
+});
+
+// Membre retiré de l'équipe : ses sessions sont fermées (au plus 1 h après)
+// et ses appareils ne reçoivent plus les notifications.
+exports.onMembersChange = functions.firestore
+  .document('app_data/members')
+  .onWrite(async (change)=>{
+    const list = snap => { try{ return snap.exists ? JSON.parse(snap.data().value || '[]') : []; }catch(e){ return []; } };
+    const after = new Set(list(change.after));
+    const removed = list(change.before).filter(m=>!after.has(m));
+    for(const member of removed){
+      await admin.auth().revokeRefreshTokens(uidOf(member)).catch(e=>{
+        if(e.code !== 'auth/user-not-found') console.error('revoke', member, e);
+      });
+      const tokens = await db.collection('fcm_tokens').where('member', '==', member).get();
+      await Promise.all(tokens.docs.map(d=>d.ref.delete()));
+    }
+  });
