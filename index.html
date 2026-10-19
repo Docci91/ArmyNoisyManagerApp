@@ -1486,6 +1486,11 @@
   .prep-stock{ display:inline; color:var(--ok); font-weight:600; font-size:12px; margin:0; }
   .late-tag{ font:800 14px/1 var(--font-display); color:#000; background:var(--blue); padding:4px 6px; white-space:nowrap; }
   .prep-row .prep-q{ text-align:right; font:800 30px/1 var(--font-display); }
+  .prep-q.many, .prep-q.lots, .kind-qty.many, .kind-qty.lots{ justify-self:end; display:grid; place-items:center; min-width:42px; height:42px; padding:0 6px; }
+  .prep-q.many, .kind-qty.many{ background:var(--blue); color:#000; }
+  .prep-q.lots, .kind-qty.lots{ background:var(--danger); color:#fff; }
+  .kind-row > .kind-qty.many, .kind-row > .kind-qty.lots{ min-width:30px; height:28px; font-size:18px; color:inherit; }
+  .kind-row > .kind-qty.many{ color:#000; } .kind-row > .kind-qty.lots{ color:#fff; }
   .kind-details{ margin:0; }
   .kind-details > summary{ list-style:none; cursor:pointer; }
   .kind-details > summary.band{ font:800 20px/1 var(--font-display); text-transform:uppercase; color:#fff; border:0; border-radius:0; padding:11px 14px;
@@ -1551,6 +1556,21 @@
   .stock-pop .stock-qty input{ width:56px; height:48px; border:0; background:transparent; text-align:center; font:800 26px/1 var(--font-display); color:#fff; padding:0; }
   @keyframes pop-in{ from{ opacity:0; transform:translateY(6px) scale(.92); } to{ opacity:1; transform:none; } }
   #stock-body{ position:relative; }
+  .stock-info{ cursor:pointer; }
+  .stock-fold{ margin-left:auto; flex:none; font:700 12px/1 var(--font-display); text-transform:uppercase; letter-spacing:.04em; color:var(--faint); padding-left:8px; }
+  .stock-row:not(.collapsed) .stock-fold{ display:none; }
+  .stock-row:not(.collapsed) .stock-info:hover .stock-fold{ display:inline; }
+  /* ligne sans stock : repliée sur la gauche, compacte, sans les tailles */
+  .stock-row.collapsed{ display:flex !important; flex-wrap:nowrap; padding:6px 0; gap:12px; }
+  .stock-row.collapsed .stock-info{ flex:0 1 auto; max-width:min(100%, 560px); }
+  .stock-row.collapsed .stock-sizes{ display:none !important; }
+  .stock-row.collapsed .stock-img{ width:34px; height:34px; }
+  .stock-row.collapsed .stock-name{ font-size:15px; color:#cfcfcf; }
+  .stock-row.collapsed .stock-sub{ display:none; }
+  .stock-row.collapsed .stock-total{ order:2; width:auto; font-size:18px; margin-left:auto; color:var(--dim); }
+  @media (min-width:900px){ .stock-row.collapsed .stock-total{ margin-left:0; } }
+  .stock-row.collapsed:hover .stock-name{ color:#fff; }
+  .stock-row.collapsed:hover .stock-fold{ color:#fff; }
   @media (min-width:900px){
     .stock-head{ display:grid; position:sticky; top:56px; z-index:3; background:#000; height:40px; align-items:center; color:var(--faint); font-size:12px; border-bottom:1px solid var(--line); }
     .stock-head span{ text-align:center; } .stock-head .h-name{ text-align:left; } .stock-head .h-total{ text-align:right; }
@@ -2157,6 +2177,9 @@
     if(e.target.id === 'kind-details') kindOpen = e.target.open;
   }, true);
 
+  // Niveau d'une quantité à préparer : 1 = normal, 2 à 5 = orange, plus de 5 = rouge.
+  const qtyLevel = q => q > 5 ? ' lots' : q > 1 ? ' many' : '';
+
   function renderOrders(){
     renderDash();
     updateOrdersBadge();
@@ -2205,7 +2228,7 @@
               ${r.image ? `<img class="prep-img" src="${escapeHtml(r.image)}" alt="" loading="lazy">` : `<div class="prep-img">${escapeHtml(initials(r.title))}</div>`}
               <div class="prep-art"><span class="prep-name">${escapeHtml(r.title)}</span><span class="prep-sub">${escapeHtml([r.variant, r.sku].filter(Boolean).join(' · '))}${r.inStock > 0 ? ` · <span class="prep-stock">${r.inStock} en stock</span>` : ''}</span></div>
               ${r.late ? `<span class="late-tag num" title="Commande la plus ancienne : ${fmt(r.oldest)}">+${daysLate(r)} J</span>` : '<span class="late-none"></span>'}
-              <span class="prep-q num">${r.qty}</span>
+              <span class="prep-q num${qtyLevel(r.qty)}">${r.qty}</span>
             </div>`).join('')}
           </div>
         </div>
@@ -2216,7 +2239,7 @@
               <b>${escapeHtml(r.label)}${baseTag(r)}</b>
               <span>${escapeHtml(r.color || '')}</span>
               <span>${escapeHtml(r.size || '—')}</span>
-              <span class="kind-qty num">${r.qty}</span>
+              <span class="kind-qty num${qtyLevel(r.qty)}">${r.qty}</span>
             </div>`).join('')}
           </div>
         </details>
@@ -2263,6 +2286,8 @@
   let stockItems = {};        // variantId -> {qty, productId, productTitle, variantTitle, sku}
   let stockWatching = false;
   let stockRenderPending = false;
+  // Lignes à 0 en stock repliées (sans les tailles) ; choix fait à la main gardé jusqu'au rechargement (true = dépliée).
+  const stockFold = new Map();
 
   function watchStock(){
     if(typeof db === 'undefined' || stockWatching) return;
@@ -2427,6 +2452,7 @@
       const header = (i === 0 || rows[i - 1].section !== r.section)
         ? `<div class="stock-group-title band section-title">${escapeHtml(r.section)}</div>` : '';
       const total = r.variants.reduce((n,v)=>n + stockQty(v.id), 0);
+      const collapsed = !term && !(stockFold.has(r.key) ? stockFold.get(r.key) : total > 0);
       const sku = baseSku(r.variants.map(v=>v.sku));
       const img = r.image
         ? `<img class="stock-img" src="${escapeHtml(r.image)}" alt="" loading="lazy">`
@@ -2446,13 +2472,14 @@
           </div>
         </div>`;
       }).join('');
-      return `${header}<div class="stock-row${r.retired ? ' retired' : ''}${total > 0 ? ' has-stock' : ''}" data-row="${escapeHtml(r.key)}">
-        <div class="stock-info">
+      return `${header}<div class="stock-row${r.retired ? ' retired' : ''}${total > 0 ? ' has-stock' : ''}${collapsed ? ' collapsed' : ''}" data-row="${escapeHtml(r.key)}">
+        <div class="stock-info" role="button" tabindex="0" aria-expanded="${!collapsed}" title="${collapsed ? 'Afficher les tailles' : 'Replier'}">
           ${img}
           <div style="min-width:0;">
             <div class="stock-name">${escapeHtml(r.title)}${r.retired ? '<span class="stock-badge">Plus en vente</span>' : ''}</div>
             <div class="stock-sub">${r.group ? `<span class="stock-color">${escapeHtml(r.group)}</span> · ` : ''}${sku ? escapeHtml(sku) : ''}</div>
           </div>
+          ${term ? '' : `<span class="stock-fold">${collapsed ? 'Tailles ▸' : 'Replier'}</span>`}
         </div>
         <div class="stock-sizes">${cells}</div>
         <div class="stock-total num${total ? '' : ' zero'}">${total}</div>
@@ -2485,6 +2512,7 @@
     const old = document.getElementById('stock-pop'); if(old) old.remove();
     if(!cell){ stockPopVariant = null; return; }
     stockPopVariant = variantId;
+    const prow = cell.closest('.stock-row'); if(prow) stockFold.set(prow.dataset.row, true);
     body.querySelectorAll('.stock-size.open').forEach(c=>c.classList.remove('open'));
     cell.classList.add('open');
     const qty = stockQty(variantId);
@@ -2542,7 +2570,15 @@
   }
   const stockBody = document.getElementById('stock-body');
   stockBody.addEventListener('click', (e)=>{
+    const info = e.target.closest('.stock-info');
+    if(info && !e.target.closest('img.stock-img') && !document.getElementById('stock-search').value.trim()){
+      const row = info.closest('.stock-row');
+      stockFold.set(row.dataset.row, row.classList.contains('collapsed'));
+      closeStockPop(); renderStock();
+      return;
+    }
     const btn = e.target.closest('button[data-delta]');
+    if(btn){ const row = btn.closest('.stock-row'); if(row) stockFold.set(row.dataset.row, true); } // une ligne modifiée reste ouverte
     if(!btn){
       const cell = e.target.closest('.stock-size[data-variant]');
       if(cell && stockIsPhone()){ e.stopPropagation(); stockPopVariant === cell.dataset.variant ? closeStockPop() : openStockPop(cell.dataset.variant); }
@@ -2557,6 +2593,7 @@
   });
   stockBody.addEventListener('change', (e)=>{
     if(!e.target.matches('.stock-qty input')) return;
+    const row = e.target.closest('.stock-row'); if(row) stockFold.set(row.dataset.row, true);
     const wrap = e.target.closest('.stock-qty');
     const qty = Math.max(0, parseInt(e.target.value, 10) || 0);
     stockFeedback(wrap.dataset.variant);
@@ -2567,6 +2604,7 @@
   });
   stockBody.addEventListener('keydown', (e)=>{
     if(e.key === 'Enter' && e.target.matches('.stock-qty input')) e.target.blur();
+    if((e.key === 'Enter' || e.key === ' ') && e.target.matches('.stock-info')){ e.preventDefault(); e.target.click(); }
   });
   document.getElementById('stock-search').addEventListener('input', ()=>{ closeStockPop(); renderStock(); });
   addEventListener('scroll', ()=>{ if(stockPopVariant && stockIsPhone() && document.activeElement?.closest?.('#stock-pop') == null) closeStockPop(); }, {passive:true});
