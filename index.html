@@ -1476,6 +1476,7 @@
   /* ---------- COMMANDES ---------- */
   .orders-head{ align-items:center; margin-bottom:16px; }
   .orders-sync{ color:var(--ink-soft); font-size:13px; }
+  .stock-actions{ display:flex; gap:8px; flex-shrink:0; }
   .orders-stats{ display:grid; grid-template-columns:repeat(3,1fr); gap:0; border-top:1px solid var(--line); border-bottom:1px solid var(--line); margin-bottom:24px; }
   .orders-stat{ background:transparent; border:0; border-left:1px solid var(--line); padding:16px 0 16px 16px; }
   .orders-stat:first-child{ border-left:0; padding-left:0; }
@@ -1765,7 +1766,10 @@
           <div class="section-title">Stock</div>
           <div class="orders-sync" id="stock-sync">—</div>
         </div>
-        <button class="ghost" id="stock-refresh-btn">Actualiser</button>
+        <div class="stock-actions">
+          <button class="ghost" id="stock-reset-btn">Réinitialiser</button>
+          <button class="ghost" id="stock-refresh-btn">Actualiser</button>
+        </div>
       </div>
       <input type="search" class="stock-search" id="stock-search" placeholder="Rechercher un produit, une taille, un SKU…">
       <div id="stock-body"><div class="empty">Chargement des produits…</div></div>
@@ -2623,6 +2627,33 @@
     if((e.key === 'Enter' || e.key === ' ') && e.target.matches('.stock-info')){ e.preventDefault(); e.target.click(); }
   });
   document.getElementById('stock-search').addEventListener('input', ()=>{ closeStockPop(); renderStock(); });
+
+  // « Réinitialiser » : remet à 0 toutes les quantités saisies (les documents restent,
+  // avec leurs noms). Par lots de 500 écritures, la limite de Firestore.
+  document.getElementById('stock-reset-btn').addEventListener('click', async (e)=>{
+    const btn = e.currentTarget;
+    const ids = Object.keys(stockItems).filter(id=>stockQty(id) > 0);
+    if(!ids.length){ toast('Le stock est déjà à zéro'); return; }
+    const pieces = ids.reduce((n, id)=>n + stockQty(id), 0);
+    if(!confirm(`Remettre tout le stock à zéro ?\n${pieces} pièce${pieces > 1 ? 's' : ''} sur ${ids.length} variante${ids.length > 1 ? 's' : ''}. Cette action ne peut pas être annulée.`)) return;
+    btn.disabled = true;
+    btn.textContent = 'Réinitialisation…';
+    try{
+      const meta = {qty: 0, updatedAt: new Date().toISOString(), updatedBy: currentUser || ''};
+      for(let i = 0; i < ids.length; i += 500){
+        const batch = db.batch();
+        ids.slice(i, i + 500).forEach(id=>batch.update(db.collection('stock_items').doc(id), meta));
+        await batch.commit();
+      }
+      closeStockPop();
+      toast('Stock remis à zéro');
+    }catch(err){
+      console.error(err);
+      toast('Échec de la réinitialisation du stock');
+    }
+    btn.disabled = false;
+    btn.textContent = 'Réinitialiser';
+  });
   addEventListener('scroll', ()=>{ if(stockPopVariant && stockIsPhone() && document.activeElement?.closest?.('#stock-pop') == null) closeStockPop(); }, {passive:true});
 
   // ---------- live task updates + notifications ----------
